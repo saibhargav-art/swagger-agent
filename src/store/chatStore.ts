@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import type { Conversation, Message } from '@/types/chat';
+import type { Conversation, Message, PendingToolRequest } from '@/types/chat';
 import { generateId } from '@/utils/format';
 
 interface ChatState {
@@ -20,6 +20,7 @@ interface ChatState {
     messageId: string,
     updates: Partial<Message>
   ) => void;
+  setPendingToolRequest: (conversationId: string, pending: PendingToolRequest | null) => void;
 
   setStreaming: (streaming: boolean) => void;
 
@@ -103,6 +104,20 @@ export const useChatStore = create<ChatState>()((set, get) => ({
           updatedAt: Date.now(),
         };
       }),
+    }));
+  },
+
+  setPendingToolRequest: (conversationId, pending) => {
+    set((s) => ({
+      conversations: s.conversations.map((c) =>
+        c.id === conversationId
+          ? {
+              ...c,
+              pendingToolRequest: pending ?? undefined,
+              updatedAt: Date.now(),
+            }
+          : c
+      ),
     }));
   },
 

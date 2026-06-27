@@ -1,131 +1,137 @@
-# swagger-agent
+# AI Chat App
 
-A lightweight AI chat application with WebMCP tool discovery and execution.
+Single React application for AI chat plus customer website tool execution.
 
-Supports **OpenAI**, **Claude**, **Gemini**, and **Ollama** out of the box.
+The app connects to:
 
----
+- an AI provider: OpenAI, Claude, Gemini, or Ollama
+- a customer website that hosts `/webapi.json`
+- an authenticated customer user session, passed as bearer token or browser session cookies
 
-## Quick Start
+The customer backend remains the source of truth for login, roles, scopes, and permissions.
+
+## Run
 
 ```bash
 npm install
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173).
+Open `http://localhost:5173`.
 
----
+## Production Build
 
-## Configuration
-
-### 1. Set your AI provider
-
-Go to **Settings** (`/settings`) and enter your API key for the provider you want to use, then select it as the active provider.
-
-| Provider | Needs          | Notes                                 |
-|----------|----------------|---------------------------------------|
-| OpenAI   | API key        | Direct browser calls supported        |
-| Claude   | API key + proxy| Requires a CORS proxy (see below)     |
-| Gemini   | API key        | Direct browser calls supported        |
-| Ollama   | Local server   | Run `ollama serve` locally            |
-
-### 2. Environment variables (optional)
-
-Create a `.env` file in the project root:
-
-```env
-# Point to a real WebMCP server (leave unset to use mock tools)
-VITE_WEBMCP_BASE_URL=http://localhost:8080
-
-# Claude proxy URL (needed to bypass CORS in the browser)
-VITE_CLAUDE_PROXY_URL=http://localhost:3001
+```bash
+npm run build
+npm run preview
 ```
 
----
+## Connection Flow
 
-## Architecture
+1. Open `Connections`.
+2. Configure and test one AI provider.
+3. Enter the customer login URL and sign in.
+4. Enter the website URL that hosts `/webapi.json`.
+5. Choose auth mode:
+   - `Bearer token`: paste the logged-in user's access token.
+   - `Browser session`: send cookies with tool calls. The customer backend must allow CORS credentials.
+6. Connect the website and verify discovered tools.
+7. Use chat for actions such as creating an order or checking order status.
 
-```
-src/
-├── pages/            # Route-level page components
-│   ├── ChatPage/     # Three-column chat interface
-│   ├── ToolExplorerPage/  # Browse & inspect tools
-│   └── SettingsPage/ # Provider configuration
-│
-├── components/
-│   ├── chat/         # MessageList, MessageBubble, ChatInput, ChatPanel
-│   ├── tools/        # ToolExplorer, ToolCard, ToolDetails
-│   ├── activity/     # ToolActivityPanel
-│   ├── providers/    # ProviderSelector
-│   ├── layout/       # NavSidebar, ConversationList, AppLayout
-│   └── ui/           # Reusable primitives (Button, Input, Badge…)
-│
-├── providers/        # AI provider implementations
-│   ├── openai/
-│   ├── claude/
-│   ├── gemini/
-│   └── ollama/
-│
-├── services/
-│   ├── ai/           # ProviderManager, ChatService (streaming + tool calls)
-│   └── webmcp/       # WebMCPService (getTools / executeTool)
-│
-├── store/            # Zustand stores (chat, provider, tool)
-├── hooks/            # useChat, useTools
-├── types/            # Shared TypeScript types
-└── utils/            # cn, format helpers
-```
+## Customer Contract
 
----
+The customer app only needs to host a JSON contract and secure backend endpoints.
 
-## Tool Call Format
+Minimum `webapi.json` shape:
 
-The system prompt instructs the AI to emit tool calls using XML tags:
-
-```
-<tool_call>{"tool": "createOrder", "params": {"customerName": "Vijay", "amount": 50}}</tool_call>
-```
-
-`ChatService` parses the response, executes the tool via `WebMCPService`, and updates the message bubble with the result — all without any UI-side business logic.
-
----
-
-## WebMCP Integration
-
-`WebMCPService` is the only integration point. It now supports two discovery modes:
-
-- OpenAPI-based discovery from a spec file such as `/webmcp-openapi.json`
-- Remote WebMCP discovery via a `/tools` endpoint fallback
-
-The service also executes tools directly from OpenAPI definitions when available, or via a remote `/execute` endpoint if the server exposes one.
-
-```ts
-// src/services/webmcp/WebMCPService.ts
-
-async getTools(): Promise<Tool[]> {
-  const spec = await this.fetchOpenApiSpec();
-  return spec ? this.parseToolsFromSpec(spec) : this.fetchToolsEndpoint();
-}
-
-async executeTool(toolName: string, params: Record<string, unknown>) {
-  const definition = this.toolDefinitions.get(toolName);
-  if (definition) {
-    return this.executeOpenApiTool(definition, params);
+```json
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Customer Tools",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "https://api.customer.com"
+    }
+  ],
+  "paths": {
+    "/action-name": {
+      "post": {
+        "operationId": "performAction",
+        "summary": "Perform an app action",
+        "x-webmcp-scopes": ["scope:write"],
+        "x-webmcp-roles": ["member", "admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["field_name"],
+                "properties": {
+                  "field_name": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
   }
-  return this.executeRemoteTool(toolName, params);
 }
 ```
 
-The rest of the application is not affected.
+`servers[0].url` is the backend that executes tools. The website URL is only used for discovery.
 
----
+## Folder Structure
 
-## Tech Stack
+```txt
+src/
+  components/
+    activity/
+    chat/
+    layout/
+    providers/
+    tools/
+    ui/
+  context/
+  hooks/
+  pages/
+    ChatPage/
+    ConnectionsPage/
+  providers/
+    claude/
+    gemini/
+    ollama/
+    openai/
+  services/
+    ai/
+    webmcp/
+  store/
+  types/
+  utils/
+  webmcp/
+```
 
-- **React 18** + **TypeScript**
-- **Vite** — build tool
-- **Tailwind CSS** — styling
-- **Zustand** — state management (with `localStorage` persistence)
-- **React Router v6** — routing
-- **Lucide React** — icons
+## Tool Execution UX
+
+The AI may emit a hidden tool payload internally, but the chat UI does not show raw JSON. Users see structured execution states:
+
+- found tool
+- executing tool
+- success or permission/session error
+- concise result preview
+
+## Security Model
+
+The chat app verifies that `/webapi.json` can be loaded and forwards auth to the tool backend.
+
+The customer backend must verify every tool call:
+
+- valid user session
+- allowed role
+- required scope
+- business permission
+- request body validation

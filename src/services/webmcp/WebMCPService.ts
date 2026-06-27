@@ -1,162 +1,201 @@
-import type { Tool } from '@/types/tool';
-
-const TOOL_CATALOG: Tool[] = [
-  {
-    id: 'createOrder',
-    name: 'createOrder',
-    description: 'Create a new customer order.',
-    requiredRoles: ['support', 'admin'],
-    requiredScopes: ['orders:write'],
-    schema: {
-      parameters: [
-        { name: 'customer_name', type: 'string', required: true, description: 'Customer or account name' },
-        { name: 'amount', type: 'number', required: true, description: 'Order amount in dollars' },
-      ],
-    },
-  },
-  {
-    id: 'updateOrderStatus',
-    name: 'updateOrderStatus',
-    description: 'Update an existing order status.',
-    requiredRoles: ['support', 'admin'],
-    requiredScopes: ['orders:write'],
-    schema: {
-      parameters: [
-        { name: 'id', type: 'string', required: true, description: 'Order UUID' },
-        { name: 'status', type: 'string', required: true, description: 'New order status' },
-      ],
-    },
-  },
-  {
-    id: 'searchOrders',
-    name: 'searchOrders',
-    description: 'Search orders by customer name.',
-    requiredRoles: ['viewer', 'support', 'admin'],
-    requiredScopes: ['orders:read'],
-    schema: {
-      parameters: [
-        { name: 'query', type: 'string', required: false, description: 'Customer search text' },
-      ],
-    },
-  },
-  {
-    id: 'deleteOrder',
-    name: 'deleteOrder',
-    description: 'Delete an order.',
-    requiredRoles: ['admin'],
-    requiredScopes: ['admin:delete'],
-    schema: {
-      parameters: [
-        { name: 'id', type: 'string', required: true, description: 'Order UUID' },
-      ],
-    },
-  },
-  {
-    id: 'approveRefund',
-    name: 'approveRefund',
-    description: 'Mark an order refund as approved.',
-    requiredRoles: ['admin'],
-    requiredScopes: ['admin:refund'],
-    schema: {
-      parameters: [
-        { name: 'id', type: 'string', required: true, description: 'Order UUID' },
-      ],
-    },
-  },
-  {
-    id: 'updateQuota',
-    name: 'updateQuota',
-    description: 'Update an application user quota.',
-    requiredRoles: ['admin'],
-    requiredScopes: ['admin:quota'],
-    schema: {
-      parameters: [
-        { name: 'user_id', type: 'string', required: true, description: 'Application user UUID' },
-        { name: 'quota', type: 'number', required: true, description: 'New quota value' },
-      ],
-    },
-  },
-];
-
-const TOOL_ENDPOINTS: Record<string, string> = {
-  createOrder: '/create-order',
-  updateOrderStatus: '/update-order-status',
-  searchOrders: '/search-orders',
-  deleteOrder: '/delete-order',
-  approveRefund: '/approve-refund',
-  updateQuota: '/update-quota',
-};
+import type { Tool, ToolParameter, ParameterType, ToolIntent } from '@/types/tool';
+import {
+  registerSwaggerTools,
+  executeSwaggerTool,
+  type WebMCPToolDefinition,
+  type AuthConfig,
+} from '@/webmcp';
 
 function normalizeUrl(url: string) {
   return url.trim().replace(/\/+$/g, '');
 }
 
-function toJsonResponse(response: Response): Promise<unknown> {
-  const contentType = response.headers.get('content-type') || '';
-  if (contentType.includes('application/json')) return response.json();
-  return response.text();
+function getSpecUrl(baseUrl: string) {
+  return baseUrl.toLowerCase().endsWith('.json')
+    ? baseUrl
+    : `${baseUrl}/webapi.json`;
+}
+
+function inferParameterType(value: unknown): ParameterType {
+  if (!value || typeof value !== 'object') return 'string';
+  const type = (value as { type?: string }).type;
+  if (type === 'number' || type === 'integer') return 'number';
+  if (type === 'boolean') return 'boolean';
+  if (type === 'array') return 'array';
+  if (type === 'object') return 'object';
+  return 'string';
+}
+
+function mapToolDefinition(def: WebMCPToolDefinition): Tool {
+  const properties = def.inputSchema?.properties ?? {};
+  const required = def.inputSchema?.required ?? [];
+
+  const parameters: ToolParameter[] = Object.entries(properties).map(
+    ([name, schema]) => ({
+      name,
+      type: inferParameterType(schema),
+      description: typeof schema === 'object' && schema && 'description' in schema
+        ? (schema as Record<string, unknown>).description as string | undefined
+        : undefined,
+      required: required.includes(name),
+      enum:
+        typeof schema === 'object' && schema && 'enum' in schema && Array.isArray((schema as Record<string, unknown>).enum)
+          ? ((schema as Record<string, unknown>).enum as unknown[]).map(String)
+          : undefined,
+    })
+  );
+
+  return {
+    id: def.name,
+    name: def.name,
+    description: def.description,
+    requiredRoles: def.securityMetadata?.requiredRoles ?? [],
+    requiredScopes: def.securityMetadata?.requiredScopes ?? [],
+    schema: { parameters },
+    metadata: {
+      intent: normalizeIntent(def.webMCPMetadata?.intent),
+      filterable: def.webMCPMetadata?.filterable,
+      searchable: def.webMCPMetadata?.searchable,
+      recordIdField: def.webMCPMetadata?.recordIdField,
+      displayField: def.webMCPMetadata?.displayField,
+      resolveIdWith: def.webMCPMetadata?.resolveIdWith,
+      requiresConfirmation: def.webMCPMetadata?.requiresConfirmation,
+    },
+  };
+}
+
+function normalizeIntent(value: string | undefined): ToolIntent | undefined {
+  const allowed = new Set<ToolIntent>(['create', 'read', 'list', 'search', 'get', 'update', 'delete', 'approve', 'write']);
+  return value && allowed.has(value as ToolIntent) ? (value as ToolIntent) : undefined;
 }
 
 export class WebMCPService {
   private baseUrl = '';
+  private specUrl = '';
+  private auth: AuthConfig | undefined;
+  private userRole: string | undefined;
+  private userScopes: string[] | undefined;
 
   constructor(baseUrl = '') {
-    this.baseUrl = normalizeUrl(baseUrl);
+    this.setBaseUrl(baseUrl);
+  }
+
+  // Allows the app to set invocation-time auth (bearer token, api key, or session)
+  setAuth(auth: AuthConfig | undefined) {
+    this.auth = auth;
+  }
+
+  // Convenience: set bearer token
+  setBearerToken(token: string | undefined) {
+    if (!token) this.auth = undefined;
+    else this.auth = { type: 'bearer', token } as AuthConfig;
+  }
+
+  setBrowserSessionAuth() {
+    this.auth = {
+      type: 'session',
+      credentials: 'include',
+      validate: () => true,
+    } as AuthConfig;
+  }
+
+  // Convenience: set api key header/value
+  setApiKey(header: string, value: string) {
+    this.auth = { type: 'apiKey', header, value } as AuthConfig;
+  }
+
+  // Set user role/scopes used for runtime permission checks
+  setInvocationContext(opts: { userRole?: string; userScopes?: string[] }) {
+    this.userRole = opts.userRole;
+    this.userScopes = opts.userScopes;
   }
 
   setBaseUrl(baseUrl: string) {
     this.baseUrl = normalizeUrl(baseUrl);
+    this.specUrl = this.baseUrl ? getSpecUrl(this.baseUrl) : '';
+  }
+
+  private async registerTools(): Promise<{
+    tools: WebMCPToolDefinition[];
+    appName?: string;
+    appDescription?: string;
+  }> {
+    if (!this.specUrl) {
+      throw new Error('No WebMCP base URL configured. Connect your WebMCP base URL in Connections.');
+    }
+
+    const result = await registerSwaggerTools({
+      spec: this.specUrl,
+      baseUrl: this.baseUrl,
+      secureMode: false,
+      auth: this.auth,
+    });
+
+    if (result.errors.length > 0) {
+      throw new Error(result.errors.join('; '));
+    }
+
+    return {
+      tools: result.tools,
+      appName: result.info?.title,
+      appDescription: result.info?.description,
+    };
   }
 
   async getTools(): Promise<Tool[]> {
     if (!this.baseUrl) {
-      throw new Error('No WebMCP base URL configured');
+      throw new Error('No WebMCP base URL configured. Connect your WebMCP base URL in Connections.');
     }
-    return TOOL_CATALOG;
+
+    const result = await this.registerTools();
+    return result.tools.map(mapToolDefinition);
   }
 
-  async testConnection(): Promise<{ toolCount: number }> {
+  async testConnection(): Promise<{
+    tools: Tool[];
+    toolCount: number;
+    appName?: string;
+    appDescription?: string;
+  }> {
     if (!this.baseUrl) {
-      throw new Error('No WebMCP base URL configured');
+      throw new Error('No WebMCP base URL configured. Connect your WebMCP base URL in Connections.');
     }
 
-    const response = await fetch(`${this.baseUrl}/search-orders`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`WebMCP connection test failed (${response.status}): ${text}`);
-    }
-
-    return { toolCount: TOOL_CATALOG.length };
+    const result = await this.registerTools();
+    const tools = result.tools.map(mapToolDefinition);
+    return {
+      tools,
+      toolCount: tools.length,
+      appName: result.appName,
+      appDescription: result.appDescription,
+    };
   }
 
   async executeTool(toolName: string, params: Record<string, unknown>): Promise<unknown> {
     if (!this.baseUrl) {
-      throw new Error('No WebMCP base URL configured');
+      throw new Error('No WebMCP base URL configured. Connect your WebMCP base URL in Connections.');
     }
-
-    const endpoint = TOOL_ENDPOINTS[toolName];
-    if (!endpoint) {
-      throw new Error(`Unknown tool: ${toolName}`);
+    try {
+      return await executeSwaggerTool(toolName, params, {
+        auth: this.auth,
+        userRole: this.userRole,
+        userScopes: this.userScopes,
+      });
+    } catch (err) {
+      // If tool was not registered yet, try to register tools from the OpenAPI spec and retry once.
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.includes("is not registered") || msg.includes("has no execute function") || msg.includes('not registered')) {
+        await this.registerTools();
+        return executeSwaggerTool(toolName, params, {
+          auth: this.auth,
+          userRole: this.userRole,
+          userScopes: this.userScopes,
+        });
+      }
+      throw err;
     }
-
-    const response = await fetch(`${this.baseUrl}${endpoint}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(params),
-    });
-
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`Tool execution failed (${response.status}): ${text}`);
-    }
-
-    return toJsonResponse(response);
   }
+
 }
 
 export const webMCPService = new WebMCPService(import.meta.env.VITE_WEBMCP_BASE_URL ?? '');

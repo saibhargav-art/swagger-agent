@@ -134,7 +134,13 @@ export class ClaudeProvider implements AIProvider {
       const models = Array.isArray(data.models) ? data.models : Array.isArray(data.data) ? data.data : [];
 
       return models
-        .map((model: any) => typeof model === 'string' ? model : model.name || model.id)
-        .filter((value): value is string => Boolean(value));
+        .map((model: unknown) =>
+          typeof model === 'string'
+            ? model
+            : typeof model === 'object' && model
+              ? (model as { name?: string; id?: string }).name || (model as { name?: string; id?: string }).id
+              : undefined
+        )
+        .filter((value: unknown): value is string => typeof value === 'string' && value.length > 0);
     }
   }

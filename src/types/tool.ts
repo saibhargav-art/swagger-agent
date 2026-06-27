@@ -12,6 +12,18 @@ export interface ToolSchema {
   parameters: ToolParameter[];
 }
 
+export type ToolIntent = 'create' | 'read' | 'list' | 'search' | 'get' | 'update' | 'delete' | 'approve' | 'write';
+
+export interface ToolMetadata {
+  intent?: ToolIntent;
+  filterable?: string[];
+  searchable?: string[];
+  recordIdField?: string;
+  displayField?: string;
+  resolveIdWith?: string;
+  requiresConfirmation?: boolean;
+}
+
 export interface Tool {
   id: string;
   name: string;
@@ -19,16 +31,5 @@ export interface Tool {
   requiredRoles: string[];
   requiredScopes: string[];
   schema: ToolSchema;
-}
-
-export type ActivityStatus = 'pending' | 'executing' | 'success' | 'error';
-
-export interface ToolActivity {
-  id: string;
-  toolName: string;
-  status: ActivityStatus;
-  timestamp: number;
-  duration?: number;
-  result?: unknown;
-  error?: string;
+  metadata?: ToolMetadata;
 }

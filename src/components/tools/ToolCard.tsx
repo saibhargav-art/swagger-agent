@@ -1,6 +1,5 @@
 import { ChevronRight } from 'lucide-react';
 import { cn } from '@/utils/cn';
-import { Badge } from '@/components/ui/index';
 import type { Tool } from '@/types/tool';
 
 interface Props {
@@ -14,32 +13,17 @@ export default function ToolCard({ tool, isSelected, onSelect }: Props) {
     <button
       onClick={onSelect}
       className={cn(
-        'w-full text-left rounded-lg border p-3 transition-colors',
+        'w-full rounded-lg border px-3 py-2 text-left transition-colors',
         'hover:border-indigo-300 hover:bg-indigo-50/40',
         isSelected
           ? 'border-indigo-400 bg-indigo-50'
           : 'border-slate-200 bg-white'
       )}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium text-slate-800 font-mono truncate">
-            {tool.name}
-          </p>
-          <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">
-            {tool.description}
-          </p>
-
-          {/* Roles */}
-          {tool.requiredRoles.length > 0 && (
-            <div className="flex flex-wrap gap-1 mt-2">
-              {tool.requiredRoles.map((role) => (
-                <Badge key={role} variant="muted">
-                  {role}
-                </Badge>
-              ))}
-            </div>
-          )}
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-slate-900">{humanizeToolName(tool.name)}</p>
+          <p className="mt-0.5 truncate text-xs text-slate-500">{tool.description}</p>
         </div>
         <ChevronRight
           size={14}
@@ -51,4 +35,13 @@ export default function ToolCard({ tool, isSelected, onSelect }: Props) {
       </div>
     </button>
   );
+}
+
+function humanizeToolName(name: string): string {
+  return name
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^./, (char) => char.toUpperCase());
 }

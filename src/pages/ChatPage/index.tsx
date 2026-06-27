@@ -16,12 +16,10 @@ export default function ChatPage() {
     setActiveConversation,
   } = useChat();
 
-  // useTools loads tools into toolStore so ChatService can reference them.
-  useTools();
+  const { tools } = useTools();
 
   return (
-    <div className="flex flex-1 overflow-hidden">
-      {/* Left: Conversation list */}
+    <div className="flex flex-1 overflow-hidden bg-white">
       <ConversationList
         conversations={conversations}
         activeId={activeConversationId}
@@ -36,6 +34,7 @@ export default function ChatPage() {
         conversation={activeConversation}
         isStreaming={isStreaming}
         onSend={sendMessage}
+        tools={tools}
       />
     </div>
   );

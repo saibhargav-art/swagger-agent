@@ -41,17 +41,18 @@ export default function ChatInput({ onSend, disabled, placeholder }: Props) {
   };
 
   return (
-    <div className="border-t border-slate-200 p-4">
-      <div className="flex items-end gap-2 rounded-lg border border-slate-300 bg-white p-2 focus-within:ring-2 focus-within:ring-indigo-500 focus-within:border-transparent transition-shadow">
+    <div className="border-t border-slate-200 px-4 py-3">
+      <div className="mx-auto max-w-4xl">
+      <div className="flex items-end gap-2 rounded-2xl border border-slate-300 bg-white p-2 transition-shadow focus-within:border-transparent focus-within:ring-2 focus-within:ring-indigo-500">
         <Textarea
           ref={textareaRef}
           value={value}
           onChange={(e) => handleChange(e.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder={disabled ? placeholder ?? 'Connect a provider first' : placeholder ?? 'Message…'}
+          placeholder={disabled ? placeholder ?? 'Complete connections first' : placeholder ?? 'Message...'}
           disabled={disabled}
           rows={1}
-          className="flex-1 border-0 p-0 shadow-none focus-visible:ring-0 resize-none min-h-[28px]"
+        className="min-h-[28px] flex-1 resize-none border-0 p-0 shadow-none focus-visible:ring-0"
         />
         <Button
           size="icon"
@@ -62,9 +63,10 @@ export default function ChatInput({ onSend, disabled, placeholder }: Props) {
           <Send size={15} />
         </Button>
       </div>
-      <p className="mt-1.5 text-center text-xs text-slate-400">
-        AI responses can be inaccurate. Verify tool results before acting.
-      </p>
+        <p className="mt-1.5 text-center text-xs text-slate-400">
+          AI responses can be inaccurate. Verify tool results before acting.
+        </p>
+      </div>
     </div>
   );
 }

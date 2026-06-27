@@ -17,6 +17,7 @@ interface ProviderState {
   setProviderConnectionStatus: (id: ProviderId, status: 'connected' | 'error' | 'not-connected') => void;
   setProviderConnectionError: (id: ProviderId, error: string | null) => void;
   setAvailableModels: (id: ProviderId, models: string[]) => void;
+  disconnectProvider: (id: ProviderId) => void;
 }
 
 export const useProviderStore = create<ProviderState>()((set) => ({
@@ -69,5 +70,11 @@ export const useProviderStore = create<ProviderState>()((set) => ({
   setAvailableModels: (id, models) =>
     set((s) => ({
       availableModels: { ...s.availableModels, [id]: models },
+    })),
+  disconnectProvider: (id) =>
+    set((s) => ({
+      connectionStatus: { ...s.connectionStatus, [id]: 'not-connected' },
+      connectionError: { ...s.connectionError, [id]: undefined },
+      availableModels: { ...s.availableModels, [id]: [] },
     })),
 }));

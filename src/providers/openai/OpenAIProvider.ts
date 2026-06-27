@@ -69,8 +69,14 @@ export class OpenAIProvider implements AIProvider {
     const models = Array.isArray(data.data) ? data.data : Array.isArray(data.models) ? data.models : [];
 
     return models
-      .map((model) => typeof model === 'string' ? model : model.id || model.name)
-      .filter((value): value is string => Boolean(value));
+      .map((model: unknown) =>
+        typeof model === 'string'
+          ? model
+          : typeof model === 'object' && model
+            ? (model as { id?: string; name?: string }).id || (model as { id?: string; name?: string }).name
+            : undefined
+      )
+      .filter((value: unknown): value is string => typeof value === 'string' && value.length > 0);
   }
 
   async *stream(messages: ChatMessage[], signal?: AbortSignal): AsyncGenerator<StreamChunk> {
