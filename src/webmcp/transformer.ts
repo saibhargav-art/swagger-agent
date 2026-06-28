@@ -134,7 +134,7 @@ function createExecute(
         ? Object.fromEntries(Object.entries(params).filter(([key]) => !pathParams[key]))
         : undefined;
 
-    if (body && Object.keys(body).length > 0) {
+    if (body) {
       headers['Content-Type'] = 'application/json';
     }
 
@@ -153,7 +153,7 @@ function createExecute(
       throw new Error('Customer session token is missing. Sign in and reconnect.');
     }
 
-    if (body && Object.keys(body).length > 0) {
+    if (body) {
       request.body = JSON.stringify(body);
     }
 

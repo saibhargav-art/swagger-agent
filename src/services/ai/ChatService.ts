@@ -36,6 +36,8 @@ No tools are available, so answer directly based on the user's request.`;
 ${toolDescriptions}
 
 Use a tool only when the user asks to perform an action that matches one of these tools.
+Handle minor spelling mistakes in the user's message by using the closest matching tool and parameter names from the schema.
+Extract every parameter that is clearly present in the user message, but leave uncertain or missing values out.
 
 When you decide to execute a tool, return exactly one <tool_call> block with the chosen tool name and params only. Do not include prose before or after it. Example:
 <tool_call>{"tool":"toolName","params":{"required_param":"value"}}</tool_call>
@@ -44,21 +46,6 @@ If the assistant returns plain JSON instead of XML tags, it must still be exactl
 
 Do not describe the tool selection process, do not mention the app internals, and do not invent new tool names.
 If the user's request does not map to an available tool, return exactly: NO_TOOL`;
-}
-
-function buildPendingToolPrompt(tool: Tool): string {
-  const params = tool.schema.parameters
-    .map((param) => `${param.name}${param.required ? '' : '?'} (${param.type})${param.description ? `: ${param.description}` : ''}`)
-    .join(', ');
-
-  return `You are collecting missing parameters for this tool only:
-- ${tool.name}: ${tool.description}
-  parameters: ${params}
-
-Return exactly one <tool_call> block when enough parameters are available. Do not include prose.
-<tool_call>{"tool":"${tool.name}","params":{"required_param":"value"}}</tool_call>
-
-If the user still has not provided enough details, return NO_TOOL.`;
 }
 
 function summarizeToolResult(toolName: string, result: unknown): string {
@@ -126,6 +113,116 @@ function normalizeText(value: string): string {
     .trim();
 }
 
+const CANONICAL_TERMS = [
+  'create',
+  'add',
+  'make',
+  'place',
+  'submit',
+  'book',
+  'new',
+  'update',
+  'change',
+  'set',
+  'mark',
+  'modify',
+  'edit',
+  'delete',
+  'remove',
+  'erase',
+  'approve',
+  'authorize',
+  'accept',
+  'list',
+  'show',
+  'display',
+  'fetch',
+  'load',
+  'search',
+  'find',
+  'lookup',
+  'look',
+  'get',
+  'check',
+  'see',
+  'verify',
+  'read',
+  'status',
+  'state',
+  'order',
+  'record',
+  'item',
+  'pending',
+  'processing',
+  'fulfilled',
+  'cancelled',
+  'canceled',
+  'approved',
+  'complete',
+  'completed',
+];
+
+const WORD_ALIASES: Record<string, string> = {
+  creat: 'create',
+  crete: 'create',
+  crate: 'create',
+  oder: 'order',
+  orde: 'order',
+  ordar: 'order',
+  ordor: 'order',
+  stats: 'status',
+  statu: 'status',
+  statuz: 'status',
+  stat: 'status',
+  serch: 'search',
+  searh: 'search',
+  serach: 'search',
+  delte: 'delete',
+  delet: 'delete',
+  remve: 'remove',
+  updte: 'update',
+  updat: 'update',
+  fulfiled: 'fulfilled',
+  fulfil: 'fulfilled',
+  canceled: 'cancelled',
+};
+
+function editDistanceWithin(a: string, b: string, maxDistance: number): boolean {
+  if (Math.abs(a.length - b.length) > maxDistance) return false;
+  if (a === b) return true;
+
+  const previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i += 1) {
+    let prevDiagonal = previous[0];
+    previous[0] = i;
+    let rowMin = previous[0];
+
+    for (let j = 1; j <= b.length; j += 1) {
+      const temp = previous[j];
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      previous[j] = Math.min(previous[j] + 1, previous[j - 1] + 1, prevDiagonal + cost);
+      prevDiagonal = temp;
+      rowMin = Math.min(rowMin, previous[j]);
+    }
+
+    if (rowMin > maxDistance) return false;
+  }
+
+  return previous[b.length] <= maxDistance;
+}
+
+function canonicalWord(word: string): string {
+  const normalized = normalizeText(word);
+  if (!normalized) return '';
+  const singular = normalized.endsWith('s') && normalized.length > 3 ? normalized.slice(0, -1) : normalized;
+  if (WORD_ALIASES[singular]) return WORD_ALIASES[singular];
+  if (CANONICAL_TERMS.includes(singular)) return singular;
+
+  const maxDistance = singular.length <= 4 ? 1 : 2;
+  const matched = CANONICAL_TERMS.find((term) => editDistanceWithin(singular, term, maxDistance));
+  return matched ?? singular;
+}
+
 function words(value: string): string[] {
   const ignored = new Set([
     'a',
@@ -155,7 +252,7 @@ function words(value: string): string[] {
 
   return normalizeText(value)
     .split(/\s+/)
-    .map((word) => (word.endsWith('s') && word.length > 3 ? word.slice(0, -1) : word))
+    .map(canonicalWord)
     .filter((word) => word.length > 2 && !ignored.has(word));
 }
 
@@ -176,9 +273,8 @@ function analyzeUserIntent(message: string): UserIntent {
   const hasLookupTarget =
     Boolean(lookupTextForMessage(message)) ||
     /[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/i.test(message);
-  const hasStatusCondition = /\b(status|state|approved|pending|processing|fulfilled|cancelled|canceled|complete|completed)\b/i.test(
-    normalized
-  );
+  const hasStatusCondition = ['status', 'state', 'approved', 'pending', 'processing', 'fulfilled', 'cancelled', 'canceled', 'complete', 'completed']
+    .some((word) => messageWords.has(word));
   const hasCondition =
     hasStatusCondition ||
     /\b(where|matching|with|having|worth|amount|greater|less|before|after|between)\b/i.test(normalized);
@@ -242,7 +338,8 @@ function scoreIntent(tool: Tool, intent: UserIntent): number {
     if (action === 'list') score += intent.hasLookupTarget && intent.action === 'search' ? 14 : 30;
     if (action === 'search') score += intent.hasLookupTarget ? 34 : 12;
     if (isCollectionReadTool(tool)) score += 10;
-    if (requiresRecordId(tool)) score -= 14;
+    if (intent.hasCondition && tool.metadata?.filterable?.length) score += 12;
+    if (requiresRecordId(tool)) score -= intent.hasCondition && !intent.hasLookupTarget ? 32 : 14;
     if (isWriteTool(tool)) score -= 18;
   }
 
@@ -261,6 +358,7 @@ function scoreIntent(tool: Tool, intent: UserIntent): number {
   if (intent.hasStatusCondition) {
     if (tool.metadata?.filterable?.some((field) => /status|state/i.test(field))) score += 10;
     if (tool.schema.parameters.some((param) => /status|state/i.test(`${param.name} ${param.description ?? ''}`))) score += 4;
+    if (intent.wantsCollection && requiresRecordId(tool)) score -= 12;
   }
 
   if (intent.hasLookupTarget) {
@@ -347,7 +445,11 @@ function requiredFields(tool: Tool): string[] {
 }
 
 function getTool(tools: Tool[], name: string): Tool | undefined {
-  return tools.find((tool) => tool.name === name);
+  const normalizedName = normalizeText(name);
+  return tools.find((tool) => {
+    const candidates = [tool.name, humanizeToolName(tool.name), tool.id].map(normalizeText);
+    return tool.name === name || candidates.includes(normalizedName);
+  });
 }
 
 function missingRequiredFields(tool: Tool, params: Record<string, unknown>): string[] {
@@ -424,11 +526,94 @@ function cleanExtractedText(value: string): string {
     .trim();
 }
 
+function stripKnownPromptWords(value: string): string {
+  const removable = new Set([
+    'create',
+    'add',
+    'make',
+    'place',
+    'submit',
+    'book',
+    'new',
+    'update',
+    'change',
+    'set',
+    'mark',
+    'modify',
+    'edit',
+    'delete',
+    'remove',
+    'erase',
+    'approve',
+    'authorize',
+    'accept',
+    'list',
+    'show',
+    'display',
+    'fetch',
+    'load',
+    'search',
+    'find',
+    'lookup',
+    'look',
+    'get',
+    'check',
+    'see',
+    'verify',
+    'read',
+    'order',
+    'record',
+    'item',
+    'status',
+    'state',
+    'for',
+    'me',
+    'my',
+    'the',
+    'a',
+    'an',
+    'with',
+    'worth',
+    'amount',
+    'valued',
+    'costing',
+    'priced',
+    'to',
+    'as',
+    'of',
+  ]);
+
+  return value
+    .replace(/(?:[$]\s*)?\b\d+(?:\.\d+)?\b/g, ' ')
+    .split(/\s+/)
+    .filter((token) => {
+      const canonical = canonicalWord(token);
+      return token.trim() && !removable.has(canonical);
+    })
+    .join(' ')
+    .replace(/[.,;:!?]+$/g, '')
+    .trim();
+}
+
+function inferNameLikeValue(message: string): string {
+  const direct = extractLookupText(message);
+  if (direct) return direct;
+
+  const patterns = [
+    /\b(?:for|named|called)\s+(.+?)(?=\s+(?:worth|amount|valued|costing|priced|status|state|to|as|with)\b|\s+[$]?\d|$)/i,
+    /\b(?:customer|account|user|name)\s+(.+?)(?=\s+(?:worth|amount|valued|costing|priced|status|state|to|as|with)\b|\s+[$]?\d|$)/i,
+  ];
+  const fromPattern = patterns.map((pattern) => message.match(pattern)?.[1]).find(Boolean);
+  const stripped = stripKnownPromptWords(fromPattern ?? message);
+  return cleanExtractedText(stripped);
+}
+
 function extractLookupText(message: string): string {
   const targetPatterns = [
+    /\b(?:create|add|make|place|submit|book)\s+(?:me\s+)?(?:an?\s+)?(?:new\s+)?(?:record|item|order)?\s*(?:for\s+)?(.+?)(?=\s+(?:with|where|that|which|status|state|to|as|worth|amount|valued|costing|priced)\b|\s+[$]?\d|$)/i,
     /\b(?:search|find|lookup|look\s+for)\s+(.+?)(?:\s+(?:record|item|order))?(?=\s+(?:with|where|that|which|status|state)\b|$)/i,
     /\b(?:status|state)\s+(?:for|of)\s+(.+?)(?=\s+(?:to|as|with|worth|amount|valued|costing|priced)\b|$)/i,
-    /\b(?:what(?:'s| is)|show|get|check|see|verify)\s+(.+?)\s+(?:status|state)\b/i,
+    /\b(?:what(?:'s| is)|show|get)\s+(.+?)\s+(?:status|state)\b/i,
     /\b(?:update|change|set|mark|modify|edit)\s+(.+?)\s+(?:status|state|as|to)\b/i,
     /\b(?:delete|remove|erase)\s+(.+?)(?:\s+(?:record|item|order))?(?=\s+(?:with|where|that|which)\b|$)/i,
     /\b(?:approve|authorize|accept)\s+(?:refund\s+)?(?:for\s+)?(.+?)(?:\s+(?:record|item|order))?(?=\s+(?:with|where|that|which)\b|$)/i,
@@ -446,7 +631,7 @@ function isGenericConditionTarget(value: string): boolean {
   const normalized = normalizeText(value);
   return (
     /^(order|orders|record|records|item|items|one|ones)( that (has|have))?$/.test(normalized) ||
-    /\b(any|all|every|approved|pending|processing|fulfilled|cancelled|canceled|complete|completed)\b/.test(normalized)
+    /\b(any|all|every|approved|pending|processing|fulfilled|cancelled|canceled|complete|completed|we have|if|with)\b/.test(normalized)
   );
 }
 
@@ -466,6 +651,7 @@ function lookupTextForMessage(message: string): string {
 function extractParamsFromMessage(message: string, tool: Tool): Record<string, unknown> {
   const params: Record<string, unknown> = {};
   const lowerMessage = message.toLowerCase();
+  const messageWords = new Set(words(message));
   const numberMatches = [...message.matchAll(/(?:[$]\s*)?\b\d+(?:\.\d+)?\b/g)].map((match) =>
     Number(match[0].replace(/[$\s]/g, ''))
   );
@@ -474,7 +660,12 @@ function extractParamsFromMessage(message: string, tool: Tool): Record<string, u
     const fieldText = `${field.name} ${field.description ?? ''}`.toLowerCase();
 
     if (field.enum?.length) {
-      const enumValue = field.enum.find((value) => lowerMessage.includes(value.toLowerCase()));
+      const enumValue = field.enum.find((value) => {
+        const normalizedValue = normalizeText(value);
+        if (lowerMessage.includes(normalizedValue)) return true;
+        const valueWords = words(value.replace(/_/g, ' '));
+        return valueWords.some((word) => messageWords.has(word));
+      });
       if (enumValue) params[field.name] = enumValue;
       continue;
     }
@@ -493,7 +684,7 @@ function extractParamsFromMessage(message: string, tool: Tool): Record<string, u
     }
 
     if (/customer|account|name/.test(fieldText)) {
-      const cleaned = extractLookupText(message);
+      const cleaned = inferNameLikeValue(message);
       if (cleaned) params[field.name] = titleCaseWords(cleaned);
       continue;
     }
@@ -501,7 +692,7 @@ function extractParamsFromMessage(message: string, tool: Tool): Record<string, u
     if (/query|search/.test(fieldText)) {
       if (isStatusFilterReadRequest(message)) continue;
       const query = message.match(/\b(?:for|search|find)\s+(.+)$/i);
-      const cleaned = cleanExtractedText(query?.[1] ?? '');
+      const cleaned = cleanExtractedText(query?.[1] ?? stripKnownPromptWords(message));
       if (cleaned) params[field.name] = cleaned;
     }
   }
@@ -631,9 +822,57 @@ function findLookupTool(tools: Tool[], targetTool: Tool, allowEmptyLookup = fals
   });
 }
 
+function findListLookupTool(tools: Tool[], targetTool: Tool): Tool | undefined {
+  const targetWords = toolConceptWords(targetTool);
+  return tools
+    .filter((tool) => tool.name !== targetTool.name)
+    .filter((tool) => isCollectionReadTool(tool))
+    .filter((tool) => canLookupWithoutInput(tool))
+    .map((tool) => ({
+      tool,
+      score:
+        (isListTool(tool) ? 10 : 0) +
+        [...toolConceptWords(tool)].filter((word) => targetWords.has(word)).length,
+    }))
+    .sort((a, b) => b.score - a.score)[0]?.tool;
+}
+
 function lookupParams(tool: Tool, lookup: string): Record<string, unknown> {
   const queryField = tool.schema.parameters.find((param) => /query|search|name|text|term/i.test(`${param.name} ${param.description ?? ''}`));
   return queryField ? { [queryField.name]: lookup } : {};
+}
+
+async function executeLookupTool(searchTool: Tool, lookup: string, targetTool: Tool, tools: Tool[]): Promise<unknown> {
+  try {
+    return await webMCPService.executeTool(searchTool.name, lookup ? lookupParams(searchTool, lookup) : {});
+  } catch (err) {
+    const fallback = findListLookupTool(tools, targetTool);
+    if (!fallback || fallback.name === searchTool.name) throw err;
+    return webMCPService.executeTool(fallback.name, {});
+  }
+}
+
+async function resolveRecordChoices(
+  searchTool: Tool,
+  lookup: string,
+  targetTool: Tool,
+  tools: Tool[]
+): Promise<{
+  choices: Array<{ label: string; value: string }>;
+  records: Array<Record<string, unknown>>;
+}> {
+  const result = await executeLookupTool(searchTool, lookup, targetTool, tools);
+  const normalizedLookup = lookup ? normalizeText(lookup) : '';
+  const allRecords = flattenRecords(result, searchTool).filter((record) => recordId(record, searchTool));
+  const records = normalizedLookup
+    ? allRecords.filter((record) => normalizeText(recordPrimaryText(record, searchTool)).includes(normalizedLookup))
+    : allRecords;
+  return {
+    records,
+    choices: records
+      .map((record) => recordOption(record, searchTool))
+      .filter((option): option is { label: string; value: string } => Boolean(option)),
+  };
 }
 
 function canLookupWithoutInput(tool: Tool): boolean {
@@ -672,11 +911,19 @@ async function resolveRequiredId(
 
   try {
     if (!lookup && searchTool.schema.parameters.some((param) => /query|search|name|text|term/i.test(`${param.name} ${param.description ?? ''}`))) {
+      const fallback = findListLookupTool(tools, tool);
+      if (!fallback) return { params };
+      const { choices, records } = await resolveRecordChoices(fallback, '', tool, tools);
+      if (choices.length === 1) {
+        return { params: { ...params, id: choices[0].value }, matchedRecord: records[0] };
+      }
+      if (choices.length > 1) {
+        return { params, choices };
+      }
       return { params };
     }
 
-    const result = await webMCPService.executeTool(searchTool.name, lookup ? lookupParams(searchTool, lookup) : {});
-    const records = flattenRecords(result, searchTool).filter((record) => recordId(record, searchTool));
+    const { choices, records } = await resolveRecordChoices(searchTool, lookup, tool, tools);
     const normalizedLookup = lookup ? normalizeText(lookup) : '';
     const exact = lookup
       ? records.find((record) => normalizeText(recordPrimaryText(record, searchTool)) === normalizedLookup)
@@ -686,7 +933,6 @@ async function resolveRequiredId(
       return { params: { ...params, id: recordId(exact, searchTool) }, matchedRecord: exact, lookup, attemptedLookup: true };
     }
 
-    const choices = records.map((record) => recordOption(record, searchTool)).filter((option): option is { label: string; value: string } => Boolean(option));
     if (choices.length === 1) {
       return { params: { ...params, id: choices[0].value }, matchedRecord: records[0], lookup, attemptedLookup: Boolean(lookup) };
     }
@@ -706,7 +952,7 @@ function unresolvedLookupMessage(resolution: IdResolution, tool: Tool) {
   if (!resolution.attemptedLookup || !resolution.lookup) return null;
   return `I searched for "${resolution.lookup}" but could not find a matching record for ${humanizeToolName(
     tool.name
-  ).toLowerCase()}. Try a more exact name or search for the record first, then run this action.`;
+  ).toLowerCase()}. Enter a more exact name or search text, and I will keep this action open.`;
 }
 
 function askForRecordTarget(tool: Tool) {
@@ -757,13 +1003,13 @@ function rankedTools(message: string, tools: Tool[]): Array<{ tool: Tool; score:
 }
 
 function isStatusFilterReadRequest(message: string): boolean {
-  const normalized = normalizeText(message);
   const messageWords = new Set(words(message));
   const hasReadIntent = ['check', 'get', 'list', 'show', 'find', 'search', 'see', 'verify'].some((word) =>
     messageWords.has(word)
   );
   const hasMutationIntent = ['create', 'update', 'delete', 'remove', 'approve', 'set', 'change'].some((word) => messageWords.has(word));
-  const hasStatusIntent = /\b(status|state|approved|pending|processing|fulfilled|cancelled|canceled|complete|completed)\b/i.test(normalized);
+  const hasStatusIntent = ['status', 'state', 'approved', 'pending', 'processing', 'fulfilled', 'cancelled', 'canceled', 'complete', 'completed']
+    .some((word) => messageWords.has(word));
   return hasReadIntent && hasStatusIntent && !hasMutationIntent;
 }
 
@@ -1031,6 +1277,91 @@ export class ChatService {
         return;
       }
 
+      const pendingToolDefinition = pendingTool ? getTool(tools, pendingTool.toolName) : undefined;
+      if (pendingToolDefinition) {
+        const resolution = await resolveRequiredId(
+          conversation,
+          tools,
+          pendingToolDefinition,
+          mergeParams(
+            pendingToolDefinition,
+            pendingTool?.params ?? {},
+            extractParamsFromMessage(userContent, pendingToolDefinition)
+          ),
+          userContent
+        );
+        const mergedParams = resolution.params;
+        const missing = missingRequiredFields(pendingToolDefinition, mergedParams);
+
+        if (missing.length > 0) {
+          const lookupMessage = missing.includes('id') ? unresolvedLookupMessage(resolution, pendingToolDefinition) : null;
+          if (lookupMessage) {
+            setPendingToolRequest(conversationId, {
+              toolName: pendingToolDefinition.name,
+              params: mergedParams,
+            });
+            updateMessage(conversationId, assistantMsgId, {
+              content: lookupMessage,
+              isStreaming: false,
+            });
+            return;
+          }
+          if (missing.includes('id') && !resolution.choices?.length) {
+            setPendingToolRequest(conversationId, {
+              toolName: pendingToolDefinition.name,
+              params: mergedParams,
+            });
+            updateMessage(conversationId, assistantMsgId, {
+              content: askForRecordTarget(pendingToolDefinition),
+              isStreaming: false,
+            });
+            return;
+          }
+
+          const mode: ToolForm['mode'] = isWriteTool(pendingToolDefinition) ? 'confirm' : 'input';
+          setPendingToolRequest(conversationId, {
+            toolName: pendingToolDefinition.name,
+            params: mergedParams,
+          });
+          updateMessage(conversationId, assistantMsgId, {
+            content: resolution.choices?.length
+              ? `I found matching records. Select the record, then ${
+                  mode === 'confirm' ? 'confirm' : 'execute'
+                } ${humanizeToolName(pendingToolDefinition.name).toLowerCase()}.`
+              : `${askForMissingFields(pendingToolDefinition, missing)}\n\nComplete the empty fields below.`,
+            toolForm: resolution.choices?.length
+              ? toolFormWithIdChoices(
+                  pendingToolDefinition,
+                  mergedParams,
+                  resolution.choices,
+                  mode,
+                  confirmationDetailsFor(mergedParams, resolution)
+                )
+              : toolForm(pendingToolDefinition, mergedParams, mode, confirmationDetailsFor(mergedParams, resolution)),
+            isStreaming: false,
+          });
+          return;
+        }
+
+        setPendingToolRequest(conversationId, null);
+        if (isWriteTool(pendingToolDefinition)) {
+          updateMessage(conversationId, assistantMsgId, {
+            content: `Confirm ${humanizeToolName(pendingToolDefinition.name).toLowerCase()} with these details.`,
+            toolForm: toolForm(
+              pendingToolDefinition,
+              mergedParams,
+              'confirm',
+              confirmationDetailsFor(mergedParams, resolution)
+            ),
+            isStreaming: false,
+          });
+          return;
+        }
+
+        await this.executeToolCall(conversationId, assistantMsgId, pendingToolDefinition, mergedParams, userContent);
+        return;
+      }
+
       const localResponse = pendingTool ? null : handleLocalToolOnlyMessage(userContent, tools);
       if (localResponse) {
         updateMessage(conversationId, assistantMsgId, {
@@ -1068,7 +1399,10 @@ export class ChatService {
         if (missing.length > 0) {
           const lookupMessage = missing.includes('id') ? unresolvedLookupMessage(resolution, selectedTool) : null;
           if (lookupMessage) {
-            setPendingToolRequest(conversationId, null);
+            setPendingToolRequest(conversationId, {
+              toolName: selectedTool.name,
+              params: extractedParams,
+            });
             updateMessage(conversationId, assistantMsgId, {
               content: lookupMessage,
               isStreaming: false,
@@ -1135,88 +1469,6 @@ export class ChatService {
         return;
       }
 
-      const pendingToolDefinition = pendingTool ? getTool(tools, pendingTool.toolName) : undefined;
-      if (pendingToolDefinition) {
-        const resolution = await resolveRequiredId(
-          conversation,
-          tools,
-          pendingToolDefinition,
-          mergeParams(
-            pendingToolDefinition,
-            pendingTool?.params ?? {},
-            extractParamsFromMessage(userContent, pendingToolDefinition)
-          ),
-          userContent
-        );
-        const mergedParams = resolution.params;
-        const missing = missingRequiredFields(pendingToolDefinition, mergedParams);
-
-        if (missing.length > 0) {
-          const lookupMessage = missing.includes('id') ? unresolvedLookupMessage(resolution, pendingToolDefinition) : null;
-          if (lookupMessage) {
-            setPendingToolRequest(conversationId, null);
-            updateMessage(conversationId, assistantMsgId, {
-              content: lookupMessage,
-              isStreaming: false,
-            });
-            return;
-          }
-          if (missing.includes('id') && !resolution.choices?.length) {
-            setPendingToolRequest(conversationId, {
-              toolName: pendingToolDefinition.name,
-              params: mergedParams,
-            });
-            updateMessage(conversationId, assistantMsgId, {
-              content: askForRecordTarget(pendingToolDefinition),
-              isStreaming: false,
-            });
-            return;
-          }
-
-          const mode: ToolForm['mode'] = isWriteTool(pendingToolDefinition) ? 'confirm' : 'input';
-          setPendingToolRequest(conversationId, {
-            toolName: pendingToolDefinition.name,
-            params: mergedParams,
-          });
-          updateMessage(conversationId, assistantMsgId, {
-            content: resolution.choices?.length
-              ? `I found multiple matching records. Select the correct record and complete any empty fields before ${
-                  mode === 'confirm' ? 'confirming' : 'executing'
-                }.`
-              : `${askForMissingFields(pendingToolDefinition, missing)}\n\nComplete the empty fields below.`,
-            toolForm: resolution.choices?.length
-              ? toolFormWithIdChoices(
-                  pendingToolDefinition,
-                  mergedParams,
-                  resolution.choices,
-                  mode,
-                  confirmationDetailsFor(mergedParams, resolution)
-                )
-              : toolForm(pendingToolDefinition, mergedParams, mode, confirmationDetailsFor(mergedParams, resolution)),
-            isStreaming: false,
-          });
-          return;
-        }
-
-        setPendingToolRequest(conversationId, null);
-        if (isWriteTool(pendingToolDefinition)) {
-          updateMessage(conversationId, assistantMsgId, {
-            content: `Confirm ${humanizeToolName(pendingToolDefinition.name).toLowerCase()} with these details.`,
-            toolForm: toolForm(
-              pendingToolDefinition,
-              mergedParams,
-              'confirm',
-              confirmationDetailsFor(mergedParams, resolution)
-            ),
-            isStreaming: false,
-          });
-          return;
-        }
-
-        await this.executeToolCall(conversationId, assistantMsgId, pendingToolDefinition, mergedParams, userContent);
-        return;
-      }
-
       // Build messages for the API call
       const history: ChatMessage[] = conversation.messages
         .filter((m) => !m.isStreaming)
@@ -1225,17 +1477,9 @@ export class ChatService {
       const apiMessages: ChatMessage[] = [
         {
           role: 'system',
-          content: pendingToolDefinition ? buildPendingToolPrompt(pendingToolDefinition) : buildSystemPrompt(tools),
+          content: buildSystemPrompt(tools),
         },
         ...history,
-        ...(pendingTool
-          ? [
-              {
-                role: 'assistant' as const,
-                content: `Pending tool: ${pendingTool.toolName}. Known params: ${JSON.stringify(pendingTool.params)}`,
-              },
-            ]
-          : []),
         { role: 'user', content: userContent },
       ];
 
@@ -1274,7 +1518,10 @@ export class ChatService {
           mergeParams(
             toolDefinition,
             pendingTool?.toolName === toolCall.tool ? pendingTool.params : {},
-            toolCall.params
+            {
+              ...extractParamsFromMessage(userContent, toolDefinition),
+              ...toolCall.params,
+            }
           ),
           userContent
         );
@@ -1283,7 +1530,10 @@ export class ChatService {
         if (missing.length > 0) {
           const lookupMessage = missing.includes('id') ? unresolvedLookupMessage(resolution, toolDefinition) : null;
           if (lookupMessage) {
-            setPendingToolRequest(conversationId, null);
+            setPendingToolRequest(conversationId, {
+              toolName: toolDefinition.name,
+              params: mergedParams,
+            });
             updateMessage(conversationId, assistantMsgId, {
               content: lookupMessage,
               isStreaming: false,
@@ -1352,20 +1602,6 @@ export class ChatService {
           isStreaming: false,
         });
       } else {
-        if (pendingToolDefinition) {
-          const missing = missingRequiredFields(pendingToolDefinition, pendingTool?.params ?? {});
-          updateMessage(conversationId, assistantMsgId, {
-            content: `${askForMissingFields(pendingToolDefinition, missing.length ? missing : requiredFields(pendingToolDefinition))}\n\nRequired fields: ${requiredFields(
-              pendingToolDefinition
-            )
-              .map((field) => `\`${field}\``)
-              .join(', ')}`,
-            toolForm: toolForm(pendingToolDefinition, pendingTool?.params ?? {}),
-            isStreaming: false,
-          });
-          return;
-        }
-
         const match = likelyToolMatch(userContent, tools);
         if (match) {
           const options = likelyToolOptions(userContent, tools);

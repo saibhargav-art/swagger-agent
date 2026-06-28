@@ -307,7 +307,7 @@ function ToolFormCard({ form, onCancel, framed = true }: { form: ToolForm; onCan
         </div>
       ) : (
         <div className="grid gap-2">
-          {isConfirmation && confirmationRows.length > 0 ? (
+          {isConfirmation && !needsInputInConfirmation && confirmationRows.length > 0 ? (
             <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
               {confirmationRows.map(([key, value]) => (
                 <div key={key} className="grid grid-cols-[120px_1fr] gap-2 text-xs">
