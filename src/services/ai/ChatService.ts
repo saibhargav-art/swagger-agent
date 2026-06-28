@@ -7,8 +7,8 @@ import { useWebMCPStore } from '@/store/webMCPStore';
 import { parseToolCall } from '@/utils/parseToolCall';
 import { generateId } from '@/utils/format';
 import type { Tool } from '@/types/tool';
-import type { ToolForm, ToolOption } from '@/types/chat';
-import type { ChatMessage } from '@/providers/types';
+import type { Conversation, ToolForm, ToolOption } from '@/types/chat';
+import type { AIProvider, ChatMessage } from '@/providers/types';
 
 // Instructs the AI how to call tools
 function buildSystemPrompt(tools: Tool[]): string {
@@ -85,15 +85,59 @@ function applyPromptResultFilterForTool(result: unknown, sourceText: string, too
   ];
   if (statusKeys.length === 0) return result;
 
-  const sourceWords = new Set(words(sourceText));
-  const ignored = new Set(['status', 'state', 'order', 'record', 'list', 'show', 'get', 'find', 'search']);
+  const filtered = filterRecordsByPrompt(records, sourceText, statusKeys);
+  if (filtered) return filtered;
 
-  for (const key of statusKeys) {
+  return result;
+}
+
+function filterRecordsByPrompt(
+  records: Array<Record<string, unknown>>,
+  sourceText: string,
+  filterKeys: string[]
+): Array<Record<string, unknown>> | null {
+  const sourceWords = new Set(words(sourceText));
+  const normalizedSource = normalizeText(sourceText);
+  const ignored = new Set([
+    'any',
+    'check',
+    'find',
+    'get',
+    'have',
+    'if',
+    'list',
+    'look',
+    'lookup',
+    'order',
+    'record',
+    'search',
+    'show',
+    'state',
+    'status',
+    'with',
+  ]);
+  const candidateWords = [...sourceWords].filter((word) => !ignored.has(word));
+  const hasFilterOperator = /\b(with|where|for|matching|named|called|name|customer|account|user|status|state)\b/i.test(
+    sourceText
+  );
+  const matchesReturnedValue = records.some((record) =>
+      filterKeys.some((key) => {
+        const value = record[key];
+        if (value === undefined || value === null) return false;
+        return words(String(value).replace(/_/g, ' '))
+          .filter((word) => !ignored.has(word))
+          .some((word) => sourceWords.has(word));
+      })
+  );
+  const hasExplicitFilterIntent = matchesReturnedValue || (hasFilterOperator && candidateWords.length > 0);
+
+  if (!hasExplicitFilterIntent) return null;
+
+  for (const key of filterKeys) {
     const values = [...new Set(records.map((record) => record[key]).filter((value) => value !== undefined && value !== null).map(String))];
     const matchedValue = values.find((value) => {
       const valueWords = words(value.replace(/_/g, ' ')).filter((word) => !ignored.has(word));
       const normalizedValue = normalizeText(value.replace(/_/g, ' '));
-      const normalizedSource = normalizeText(sourceText);
       return normalizedSource.includes(normalizedValue) || valueWords.some((word) => sourceWords.has(word));
     });
 
@@ -102,7 +146,7 @@ function applyPromptResultFilterForTool(result: unknown, sourceText: string, too
     }
   }
 
-  return result;
+  return [];
 }
 
 function normalizeText(value: string): string {
@@ -619,7 +663,9 @@ function extractLookupText(message: string): string {
     /\b(?:approve|authorize|accept)\s+(?:refund\s+)?(?:for\s+)?(.+?)(?:\s+(?:record|item|order))?(?=\s+(?:with|where|that|which)\b|$)/i,
   ];
   const targeted = targetPatterns.map((pattern) => message.match(pattern)?.[1]).find(Boolean);
-  const direct = message.match(/\b(?:for|named|called)\s+(.+?)(?=\s+(?:status|to|as|with|worth|amount|valued|costing|priced)\b|\s+[$]?\d|$)/i);
+  const direct = message.match(
+    /\b(?:for|named|called|(?:with\s+)?(?:name|customer|account|user))\s+(.+?)(?=\s+(?:status|to|as|with|worth|amount|valued|costing|priced)\b|\s+[$]?\d|$)/i
+  );
   const quoted = message.match(/["']([^"']+)["']/);
   const value = targeted ?? direct?.[1] ?? quoted?.[1] ?? '';
   const cleaned = cleanExtractedText(value);
@@ -1165,6 +1211,112 @@ function handleLocalToolOnlyMessage(
 }
 
 export class ChatService {
+  private async planWithModel(provider: AIProvider, tools: Tool[], conversation: Conversation, userContent: string) {
+    const history: ChatMessage[] = conversation.messages
+      .filter((m) => !m.isStreaming)
+      .slice(-8)
+      .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
+
+    const response = await provider.chat([
+      {
+        role: 'system',
+        content: buildSystemPrompt(tools),
+      },
+      ...history,
+      { role: 'user', content: userContent },
+    ]);
+
+    return parseToolCall(response);
+  }
+
+  private async handleToolPlan({
+    conversationId,
+    messageId,
+    conversation,
+    tools,
+    plan,
+    userContent,
+  }: {
+    conversationId: string;
+    messageId: string;
+    conversation: Conversation;
+    tools: Tool[];
+    plan: { tool: string; params: Record<string, unknown> };
+    userContent: string;
+  }): Promise<boolean> {
+    const { updateMessage, setPendingToolRequest } = useChatStore.getState();
+    const toolDefinition = getTool(tools, plan.tool);
+    if (!toolDefinition) return false;
+
+    const resolution = await resolveRequiredId(
+      conversation,
+      tools,
+      toolDefinition,
+      mergeParams(toolDefinition, {}, { ...extractParamsFromMessage(userContent, toolDefinition), ...plan.params }),
+      userContent
+    );
+    const params = resolution.params;
+    const missing = missingRequiredFields(toolDefinition, params);
+
+    if (missing.length > 0) {
+      const lookupMessage = missing.includes('id') ? unresolvedLookupMessage(resolution, toolDefinition) : null;
+      setPendingToolRequest(conversationId, {
+        toolName: toolDefinition.name,
+        params,
+      });
+
+      if (lookupMessage) {
+        updateMessage(conversationId, messageId, {
+          content: lookupMessage,
+          isStreaming: false,
+        });
+        return true;
+      }
+
+      if (missing.includes('id') && !resolution.choices?.length) {
+        updateMessage(conversationId, messageId, {
+          content: askForRecordTarget(toolDefinition),
+          isStreaming: false,
+        });
+        return true;
+      }
+
+      const mode: ToolForm['mode'] = isWriteTool(toolDefinition) ? 'confirm' : 'input';
+      updateMessage(conversationId, messageId, {
+        content: resolution.choices?.length
+          ? `I found matching records. Select the record, then ${
+              mode === 'confirm' ? 'confirm' : 'execute'
+            } ${humanizeToolName(toolDefinition.name).toLowerCase()}.`
+          : `${askForMissingFields(toolDefinition, missing)}\n\nComplete the empty fields below.`,
+        toolForm: resolution.choices?.length
+          ? toolFormWithIdChoices(
+              toolDefinition,
+              params,
+              resolution.choices,
+              mode,
+              confirmationDetailsFor(params, resolution)
+            )
+          : toolForm(toolDefinition, params, mode, confirmationDetailsFor(params, resolution)),
+        isStreaming: false,
+      });
+      return true;
+    }
+
+    setPendingToolRequest(conversationId, null);
+
+    if (isWriteTool(toolDefinition)) {
+      updateMessage(conversationId, messageId, {
+        content: `Confirm ${humanizeToolName(toolDefinition.name).toLowerCase()} with these details.`,
+        toolForm: toolForm(toolDefinition, params, 'confirm', confirmationDetailsFor(params, resolution)),
+        isStreaming: false,
+      });
+      return true;
+    }
+
+    await this.executeToolCall(conversationId, messageId, toolDefinition, params, userContent);
+    return true;
+  }
+
   private async executeToolCall(
     conversationId: string,
     messageId: string,
@@ -1279,87 +1431,22 @@ export class ChatService {
 
       const pendingToolDefinition = pendingTool ? getTool(tools, pendingTool.toolName) : undefined;
       if (pendingToolDefinition) {
-        const resolution = await resolveRequiredId(
+        const handled = await this.handleToolPlan({
+          conversationId,
+          messageId: assistantMsgId,
           conversation,
           tools,
-          pendingToolDefinition,
-          mergeParams(
-            pendingToolDefinition,
-            pendingTool?.params ?? {},
-            extractParamsFromMessage(userContent, pendingToolDefinition)
-          ),
-          userContent
-        );
-        const mergedParams = resolution.params;
-        const missing = missingRequiredFields(pendingToolDefinition, mergedParams);
-
-        if (missing.length > 0) {
-          const lookupMessage = missing.includes('id') ? unresolvedLookupMessage(resolution, pendingToolDefinition) : null;
-          if (lookupMessage) {
-            setPendingToolRequest(conversationId, {
-              toolName: pendingToolDefinition.name,
-              params: mergedParams,
-            });
-            updateMessage(conversationId, assistantMsgId, {
-              content: lookupMessage,
-              isStreaming: false,
-            });
-            return;
-          }
-          if (missing.includes('id') && !resolution.choices?.length) {
-            setPendingToolRequest(conversationId, {
-              toolName: pendingToolDefinition.name,
-              params: mergedParams,
-            });
-            updateMessage(conversationId, assistantMsgId, {
-              content: askForRecordTarget(pendingToolDefinition),
-              isStreaming: false,
-            });
-            return;
-          }
-
-          const mode: ToolForm['mode'] = isWriteTool(pendingToolDefinition) ? 'confirm' : 'input';
-          setPendingToolRequest(conversationId, {
-            toolName: pendingToolDefinition.name,
-            params: mergedParams,
-          });
-          updateMessage(conversationId, assistantMsgId, {
-            content: resolution.choices?.length
-              ? `I found matching records. Select the record, then ${
-                  mode === 'confirm' ? 'confirm' : 'execute'
-                } ${humanizeToolName(pendingToolDefinition.name).toLowerCase()}.`
-              : `${askForMissingFields(pendingToolDefinition, missing)}\n\nComplete the empty fields below.`,
-            toolForm: resolution.choices?.length
-              ? toolFormWithIdChoices(
-                  pendingToolDefinition,
-                  mergedParams,
-                  resolution.choices,
-                  mode,
-                  confirmationDetailsFor(mergedParams, resolution)
-                )
-              : toolForm(pendingToolDefinition, mergedParams, mode, confirmationDetailsFor(mergedParams, resolution)),
-            isStreaming: false,
-          });
-          return;
-        }
-
-        setPendingToolRequest(conversationId, null);
-        if (isWriteTool(pendingToolDefinition)) {
-          updateMessage(conversationId, assistantMsgId, {
-            content: `Confirm ${humanizeToolName(pendingToolDefinition.name).toLowerCase()} with these details.`,
-            toolForm: toolForm(
+          plan: {
+            tool: pendingToolDefinition.name,
+            params: mergeParams(
               pendingToolDefinition,
-              mergedParams,
-              'confirm',
-              confirmationDetailsFor(mergedParams, resolution)
+              pendingTool?.params ?? {},
+              extractParamsFromMessage(userContent, pendingToolDefinition)
             ),
-            isStreaming: false,
-          });
-          return;
-        }
-
-        await this.executeToolCall(conversationId, assistantMsgId, pendingToolDefinition, mergedParams, userContent);
-        return;
+          },
+          userContent,
+        });
+        if (handled) return;
       }
 
       const localResponse = pendingTool ? null : handleLocalToolOnlyMessage(userContent, tools);
@@ -1370,6 +1457,29 @@ export class ChatService {
           isStreaming: false,
         });
         return;
+      }
+
+      if (mcpStatus === 'connected' && baseUrl.trim()) {
+        updateMessage(conversationId, assistantMsgId, {
+          content: 'Selecting an action...',
+        });
+
+        try {
+          const modelPlan = await this.planWithModel(provider, tools, conversation, userContent);
+          if (modelPlan) {
+            const handled = await this.handleToolPlan({
+              conversationId,
+              messageId: assistantMsgId,
+              conversation,
+              tools,
+              plan: modelPlan,
+              userContent,
+            });
+            if (handled) return;
+          }
+        } catch {
+          // Fall back to deterministic routing below when the provider cannot produce a valid plan.
+        }
       }
 
       const ambiguousOptions = pendingTool ? [] : ambiguousToolOptions(userContent, tools);
@@ -1384,243 +1494,38 @@ export class ChatService {
 
       const directMatch = bestToolMatch(userContent, tools);
       if (directMatch) {
-        const selectedTool = directMatch;
-        const existingParams = pendingTool?.toolName === selectedTool.name ? pendingTool.params : {};
-        const resolution = await resolveRequiredId(
+        const handled = await this.handleToolPlan({
+          conversationId,
+          messageId: assistantMsgId,
           conversation,
           tools,
-          selectedTool,
-          mergeParams(selectedTool, existingParams, extractParamsFromMessage(userContent, selectedTool)),
-          userContent
-        );
-        const extractedParams = resolution.params;
-        const missing = missingRequiredFields(selectedTool, extractedParams);
+          plan: {
+            tool: directMatch.name,
+            params: extractParamsFromMessage(userContent, directMatch),
+          },
+          userContent,
+        });
+        if (handled) return;
+      }
 
-        if (missing.length > 0) {
-          const lookupMessage = missing.includes('id') ? unresolvedLookupMessage(resolution, selectedTool) : null;
-          if (lookupMessage) {
-            setPendingToolRequest(conversationId, {
-              toolName: selectedTool.name,
-              params: extractedParams,
-            });
-            updateMessage(conversationId, assistantMsgId, {
-              content: lookupMessage,
-              isStreaming: false,
-            });
-            return;
-          }
-          if (missing.includes('id') && !resolution.choices?.length) {
-            setPendingToolRequest(conversationId, {
-              toolName: selectedTool.name,
-              params: extractedParams,
-            });
-            updateMessage(conversationId, assistantMsgId, {
-              content: askForRecordTarget(selectedTool),
-              isStreaming: false,
-            });
-            return;
-          }
-
-          const mode: ToolForm['mode'] = isWriteTool(selectedTool) ? 'confirm' : 'input';
-          setPendingToolRequest(conversationId, {
-            toolName: selectedTool.name,
-            params: extractedParams,
-          });
-          updateMessage(conversationId, assistantMsgId, {
-            content: resolution.choices?.length
-              ? `I found multiple matching records. Select the correct record and complete any empty fields before ${
-                  mode === 'confirm' ? 'confirming' : 'executing'
-                }.`
-              : `I found ${humanizeToolName(selectedTool.name)}. ${
-                  Object.keys(extractedParams).length > 0
-                    ? 'I filled what I could. Complete the missing fields, then execute it.'
-                    : 'Enter the details below, then execute it.'
-                }`,
-            toolForm: resolution.choices?.length
-              ? toolFormWithIdChoices(
-                  selectedTool,
-                  extractedParams,
-                  resolution.choices,
-                  mode,
-                  confirmationDetailsFor(extractedParams, resolution)
-                )
-              : toolForm(selectedTool, extractedParams, mode, confirmationDetailsFor(extractedParams, resolution)),
-            isStreaming: false,
-          });
-          return;
-        }
-
-        setPendingToolRequest(conversationId, null);
-        if (isWriteTool(selectedTool)) {
-          updateMessage(conversationId, assistantMsgId, {
-            content: `Confirm ${humanizeToolName(selectedTool.name).toLowerCase()} with these details.`,
-            toolForm: toolForm(
-              selectedTool,
-              extractedParams,
-              'confirm',
-              confirmationDetailsFor(extractedParams, resolution)
-            ),
-            isStreaming: false,
-          });
-          return;
-        }
-
-        await this.executeToolCall(conversationId, assistantMsgId, selectedTool, extractedParams, userContent);
+      const match = likelyToolMatch(userContent, tools);
+      if (match) {
+        const options = likelyToolOptions(userContent, tools);
+        updateMessage(conversationId, assistantMsgId, {
+          content: `Did you mean ${humanizeToolName(match.name)}? Select the action to continue.`,
+          toolOptions: options.length > 0 ? options : toolOptions([match], userContent),
+          isStreaming: false,
+        });
         return;
       }
 
-      // Build messages for the API call
-      const history: ChatMessage[] = conversation.messages
-        .filter((m) => !m.isStreaming)
-        .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content }));
-
-      const apiMessages: ChatMessage[] = [
-        {
-          role: 'system',
-          content: buildSystemPrompt(tools),
-        },
-        ...history,
-        { role: 'user', content: userContent },
-      ];
-
-      // Stream the response
-      let fullContent = '';
-
-      for await (const chunk of provider.stream(apiMessages)) {
-        if (chunk.done) break;
-        if (chunk.text) {
-          fullContent += chunk.text;
-          updateMessage(conversationId, assistantMsgId, {
-            content: 'Selecting a tool...',
-          });
-        }
-      }
-
-      const parsedToolCall = parseToolCall(fullContent);
-      const toolCall = mcpStatus === 'connected' && baseUrl.trim() ? parsedToolCall : null;
-
-      if (toolCall) {
-        const toolDefinition = getTool(tools, toolCall.tool);
-        if (!toolDefinition) {
-          setPendingToolRequest(conversationId, null);
-          updateMessage(conversationId, assistantMsgId, {
-            content:
-              'I could not match that request to one of the connected app actions. Ask for one of the listed actions.',
-            isStreaming: false,
-          });
-          return;
-        }
-
-        const resolution = await resolveRequiredId(
-          conversation,
-          tools,
-          toolDefinition,
-          mergeParams(
-            toolDefinition,
-            pendingTool?.toolName === toolCall.tool ? pendingTool.params : {},
-            {
-              ...extractParamsFromMessage(userContent, toolDefinition),
-              ...toolCall.params,
-            }
-          ),
-          userContent
-        );
-        const mergedParams = resolution.params;
-        const missing = missingRequiredFields(toolDefinition, mergedParams);
-        if (missing.length > 0) {
-          const lookupMessage = missing.includes('id') ? unresolvedLookupMessage(resolution, toolDefinition) : null;
-          if (lookupMessage) {
-            setPendingToolRequest(conversationId, {
-              toolName: toolDefinition.name,
-              params: mergedParams,
-            });
-            updateMessage(conversationId, assistantMsgId, {
-              content: lookupMessage,
-              isStreaming: false,
-            });
-            return;
-          }
-          if (missing.includes('id') && !resolution.choices?.length) {
-            setPendingToolRequest(conversationId, {
-              toolName: toolDefinition.name,
-              params: mergedParams,
-            });
-            updateMessage(conversationId, assistantMsgId, {
-              content: askForRecordTarget(toolDefinition),
-              isStreaming: false,
-            });
-            return;
-          }
-
-          const mode: ToolForm['mode'] = isWriteTool(toolDefinition) ? 'confirm' : 'input';
-          setPendingToolRequest(conversationId, {
-            toolName: toolCall.tool,
-            params: mergedParams,
-          });
-          updateMessage(conversationId, assistantMsgId, {
-            content: resolution.choices?.length
-              ? `I found multiple matching records. Select the correct record and complete any empty fields before ${
-                  mode === 'confirm' ? 'confirming' : 'executing'
-                }.`
-              : `${askForMissingFields(toolDefinition, missing)}\n\nRequired fields: ${requiredFields(toolDefinition)
-                  .map((field) => `\`${field}\``)
-                  .join(', ')}`,
-            toolForm: resolution.choices?.length
-              ? toolFormWithIdChoices(
-                  toolDefinition,
-                  mergedParams,
-                  resolution.choices,
-                  mode,
-                  confirmationDetailsFor(mergedParams, resolution)
-                )
-              : toolForm(toolDefinition, mergedParams, mode, confirmationDetailsFor(mergedParams, resolution)),
-            isStreaming: false,
-          });
-          return;
-        }
-
-        setPendingToolRequest(conversationId, null);
-        if (isWriteTool(toolDefinition)) {
-          updateMessage(conversationId, assistantMsgId, {
-            content: `Confirm ${humanizeToolName(toolDefinition.name).toLowerCase()} with these details.`,
-            toolForm: toolForm(
-              toolDefinition,
-              mergedParams,
-              'confirm',
-              confirmationDetailsFor(mergedParams, resolution)
-            ),
-            isStreaming: false,
-          });
-          return;
-        }
-
-        await this.executeToolCall(conversationId, assistantMsgId, toolDefinition, mergedParams, userContent);
-      } else if (parsedToolCall) {
-        updateMessage(conversationId, assistantMsgId, {
-          content:
-            'I found the right tool request, but no customer website is connected. Open Connections, verify the user session, then try again.',
-          isStreaming: false,
-        });
-      } else {
-        const match = likelyToolMatch(userContent, tools);
-        if (match) {
-          const options = likelyToolOptions(userContent, tools);
-          updateMessage(conversationId, assistantMsgId, {
-            content: `Did you mean ${humanizeToolName(match.name)}? Select the action to continue.`,
-            toolOptions: options.length > 0 ? options : toolOptions([match], userContent),
-            isStreaming: false,
-          });
-          return;
-        }
-
-        updateMessage(conversationId, assistantMsgId, {
-          content: `I could not map that request to one connected app action. I can perform these actions:\n\n${describeTools(
-            tools
-          )}${exampleRequests(tools)}`,
-          toolOptions: toolOptions(tools, userContent),
-          isStreaming: false,
-        });
-      }
+      updateMessage(conversationId, assistantMsgId, {
+        content: `I could not map that request to one connected app action. I can perform these actions:\n\n${describeTools(
+          tools
+        )}${exampleRequests(tools)}`,
+        toolOptions: toolOptions(tools, userContent),
+        isStreaming: false,
+      });
     } catch (err) {
       let error = err instanceof Error ? err.message : 'An error occurred';
       if (typeof error === 'string' && error.includes('No WebMCP base URL configured')) {
