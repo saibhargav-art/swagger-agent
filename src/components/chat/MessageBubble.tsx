@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { User, Bot, CheckCircle, XCircle, Loader2, Wrench } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { Badge } from '@/components/ui/index';
@@ -72,6 +72,7 @@ export default function MessageBubble({ message }: Props) {
       <div className={cn('flex max-w-[88%] flex-col gap-2 sm:max-w-[78%]', isUser && 'items-end')}>
         {hasActionCard ? (
           <ToolActionsCard
+            messageId={message.id}
             content={visibleContent}
             notice={actionNotice}
             options={visibleToolOptions}
@@ -112,6 +113,7 @@ export default function MessageBubble({ message }: Props) {
 }
 
 function ToolActionsCard({
+  messageId,
   content,
   notice,
   options,
@@ -119,6 +121,7 @@ function ToolActionsCard({
   onSelect,
   onCancel,
 }: {
+  messageId: string;
   content: string;
   notice?: string;
   options: ToolOption[];
@@ -141,7 +144,7 @@ function ToolActionsCard({
       ) : null}
       {selectedForm ? (
         <div className="mt-3 border-t border-slate-100 pt-3">
-          <ToolFormCard form={selectedForm} onCancel={onCancel} framed={false} />
+          <ToolFormCard messageId={messageId} form={selectedForm} onCancel={onCancel} framed={false} />
         </div>
       ) : null}
     </div>
@@ -190,9 +193,20 @@ function ToolOptions({
   );
 }
 
-function ToolFormCard({ form, onCancel, framed = true }: { form: ToolForm; onCancel: () => void; framed?: boolean }) {
-  const { activeConversationId, setPendingToolRequest } = useChatStore();
+function ToolFormCard({
+  messageId,
+  form,
+  onCancel,
+  framed = true,
+}: {
+  messageId: string;
+  form: ToolForm;
+  onCancel: () => void;
+  framed?: boolean;
+}) {
+  const { activeConversationId, setPendingToolRequest, updateMessage } = useChatStore();
   const isConfirmation = form.mode === 'confirm';
+  const executionLockedRef = useRef(false);
   const [values, setValues] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       form.fields.map((field) => [field.name, form.initialParams?.[field.name]?.toString() ?? ''])
@@ -237,9 +251,12 @@ function ToolFormCard({ form, onCancel, framed = true }: { form: ToolForm; onCan
     setResult(null);
     setError('');
     setReadyToConfirm(false);
+    executionLockedRef.current = false;
   }, [form]);
 
   const execute = async () => {
+    if (executionLockedRef.current || status === 'executing' || status === 'success') return;
+
     if (missing.length > 0) {
       const missingText = missing.map((name) => {
         const field = form.fields.find((item) => item.name === name);
@@ -259,6 +276,7 @@ function ToolFormCard({ form, onCancel, framed = true }: { form: ToolForm; onCan
       return;
     }
 
+    executionLockedRef.current = true;
     const params = Object.fromEntries(
       form.fields
         .filter((field) => values[field.name]?.trim())
@@ -268,17 +286,53 @@ function ToolFormCard({ form, onCancel, framed = true }: { form: ToolForm; onCan
     setStatus('executing');
     setError('');
     setResult(null);
+    const startedAt = Date.now();
+    if (activeConversationId) {
+      updateMessage(activeConversationId, messageId, {
+        toolCall: {
+          toolName: form.toolName,
+          params,
+          status: 'executing',
+          startedAt,
+        },
+      });
+    }
 
     try {
       const response = await webMCPService.executeTool(form.toolName, params);
       if (activeConversationId) {
         setPendingToolRequest(activeConversationId, null);
+        updateMessage(activeConversationId, messageId, {
+          content: summarizeResult(form.toolName, response),
+          toolForm: undefined,
+          toolCall: {
+            toolName: form.toolName,
+            params,
+            status: 'success',
+            result: response,
+            startedAt,
+            completedAt: Date.now(),
+          },
+        });
       }
       setResult(response);
       setStatus('success');
     } catch (err) {
+      executionLockedRef.current = false;
       setError(err instanceof Error ? friendlyError(err.message) : 'Tool execution failed.');
       setStatus('error');
+      if (activeConversationId) {
+        updateMessage(activeConversationId, messageId, {
+          toolCall: {
+            toolName: form.toolName,
+            params,
+            status: 'error',
+            error: err instanceof Error ? friendlyError(err.message) : 'Tool execution failed.',
+            startedAt,
+            completedAt: Date.now(),
+          },
+        });
+      }
     }
   };
 
