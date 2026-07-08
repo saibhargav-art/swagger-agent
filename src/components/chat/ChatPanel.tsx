@@ -38,8 +38,8 @@ export default function ChatPanel({ conversation, isStreaming, onSend, tools }: 
       <MessageList
         messages={conversation?.messages ?? []}
         isStreaming={isStreaming}
-        providerConnected
-        providerLabel={aiLabel}
+        agentConnected
+        agentLabel={aiLabel}
         websiteConnected={websiteConnected}
         tools={tools}
         onGoToConnections={() => navigate('/connections')}

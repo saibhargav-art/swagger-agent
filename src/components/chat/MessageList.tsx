@@ -7,8 +7,8 @@ import type { Tool } from '@/types/tool';
 interface Props {
   messages: Message[];
   isStreaming: boolean;
-  providerConnected: boolean;
-  providerLabel?: string;
+  agentConnected: boolean;
+  agentLabel?: string;
   websiteConnected: boolean;
   tools: Tool[];
   onGoToConnections: () => void;
@@ -17,8 +17,8 @@ interface Props {
 export default function MessageList({
   messages,
   isStreaming,
-  providerConnected,
-  providerLabel = 'AI provider',
+  agentConnected,
+  agentLabel = 'Local agent',
   websiteConnected,
   tools,
   onGoToConnections,
@@ -60,7 +60,7 @@ export default function MessageList({
           </div>
 
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
-            <SetupStep label={providerLabel} ready={providerConnected} icon={Bot} />
+            <SetupStep label={agentLabel} ready={agentConnected} icon={Bot} />
             <SetupStep label="Website session" ready={websiteConnected} icon={Globe2} />
             <SetupStep label={`${toolCount} tools discovered`} ready={toolCount > 0} icon={CheckCircle2} />
           </div>
