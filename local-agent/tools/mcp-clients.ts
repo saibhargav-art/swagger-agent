@@ -1,7 +1,7 @@
 import { McpClient } from '@strands-agents/sdk'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
-import type { LocalAgentConfig } from './config.js'
+import type { LocalAgentConfig } from '../config.js'
 
 export function createMcpClients(config: LocalAgentConfig): McpClient[] {
   const clients: McpClient[] = []

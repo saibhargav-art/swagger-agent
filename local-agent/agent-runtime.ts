@@ -1,16 +1,16 @@
 import { Agent, type Message, type ToolList } from '@strands-agents/sdk'
 import { OpenAIModel } from '@strands-agents/sdk/models/openai'
 
-import { createMcpClients, disconnectMcpClients } from './mcp-clients.js'
+import { createMcpClients, disconnectMcpClients } from './tools/mcp-clients.js'
 import {
   approvePendingWebMcpWrite,
   clearPendingWebMcpWrite,
   createWebMcpTools,
   getPendingWebMcpWrite,
   hasPendingWebMcpWrite,
-} from './webmcp-tools.js'
+} from './tools/webmcp-tools.js'
 import type { LocalAgentConfig } from './config.js'
-import { OllamaModel } from './ollama-model.js'
+import { OllamaModel } from './models/ollama-model.js'
 
 export type RunAgentInput = {
   message: string

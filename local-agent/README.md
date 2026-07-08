@@ -11,6 +11,23 @@ The React app should stay focused on connection UX and chat UI. This runtime own
 5. Let the model select tools and extract parameters from natural language.
 6. Let runtime policy enforce confirmations before write actions.
 
+## Folder Shape
+
+```txt
+local-agent/
+  agent-runtime.ts      # generic Strands orchestration
+  server.ts             # local HTTP bridge for the React app
+  strands-agent.ts      # CLI entry point
+  config.ts             # environment/runtime config
+  models/
+    ollama-model.ts     # Ollama model adapter for Strands tool events
+  tools/
+    webmcp-tools.ts     # /webapi.json to Strands tool conversion
+    mcp-clients.ts      # optional external MCP server clients
+```
+
+Provider-specific code should stay under `models/`. Tool-source-specific code should stay under `tools/`.
+
 ## Run
 
 ```powershell

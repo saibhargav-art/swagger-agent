@@ -6,7 +6,7 @@ import type {
   OpenApiOperation,
   OpenApiParameter,
   WebMcpOperation,
-} from './types.js'
+} from '../types.js'
 
 const HTTP_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete'])
 
