@@ -1,10 +1,9 @@
 import { useEffect, useState, type KeyboardEvent } from 'react';
 import { Bot, CheckCircle2, ExternalLink, Globe2, Loader2 } from 'lucide-react';
-import { useProviderStore } from '@/store/providerStore';
-import { providerManager } from '@/services/ai/ProviderManager';
 import { useTools } from '@/hooks/useTools';
 import { useWebMCPStore } from '@/store/webMCPStore';
 import { useToolStore } from '@/store/toolStore';
+import { useAgentRuntimeStore, type StrandsModelProvider } from '@/store/agentRuntimeStore';
 import { webMCPService } from '@/services/webmcp/WebMCPService';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -12,10 +11,6 @@ import ToolExplorer from '@/components/tools/ToolExplorer';
 import ToolDetails from '@/components/tools/ToolDetails';
 import { useAuth } from '@/context/AuthContext';
 import type { Tool } from '@/types/tool';
-import type { ProviderId } from '@/types/provider';
-import { PROVIDER_LABELS } from '@/types/provider';
-
-const PROVIDERS: ProviderId[] = ['openai', 'claude', 'gemini', 'ollama'];
 
 const statusClass: Record<'connected' | 'error' | 'not-connected', string> = {
   connected: 'border-emerald-200 bg-emerald-50 text-emerald-700',
@@ -77,19 +72,19 @@ export default function ConnectionsPage() {
   const { setTools } = useToolStore();
   const { baseUrl, status, error: mcpError, toolCount, setBaseUrl, setStatus, setError, setToolCount, setAppInfo, disconnect } =
     useWebMCPStore();
+  const { setAuthConfig } = useWebMCPStore();
   const {
-    activeProviderId,
-    configs,
-    connectionStatus,
-    connectionError,
-    availableModels,
-    setActiveProvider,
-    updateConfig,
-    setProviderConnectionStatus,
-    setProviderConnectionError,
-    setAvailableModels,
-    disconnectProvider,
-  } = useProviderStore();
+    agentUrl,
+    modelProvider,
+    ollamaBaseUrl,
+    ollamaModel,
+    openAiApiKey,
+    openAiModel,
+    setAgentUrl,
+    setModelProvider,
+    setOllamaConfig,
+    setOpenAiConfig,
+  } = useAgentRuntimeStore();
   const { accessToken, login, logout } = useAuth();
 
   const [selectedTool, setSelectedTool] = useState<Tool | null>(null);
@@ -97,18 +92,10 @@ export default function ConnectionsPage() {
   const [loginUrl, setLoginUrl] = useState('');
   const [authMode, setAuthMode] = useState<'bearer' | 'browser-session'>('bearer');
   const [tokenInput, setTokenInput] = useState(accessToken ?? '');
-  const [providerTesting, setProviderTesting] = useState(false);
   const [mcpTesting, setMCPTesting] = useState(false);
-
-  const currentConfig = configs[activeProviderId];
-  const providerOptions = availableModels[activeProviderId] ?? [];
-  const providerStatus = connectionStatus[activeProviderId] ?? 'not-connected';
-  const currentCredential =
-    activeProviderId === 'ollama'
-      ? (currentConfig as { baseUrl: string }).baseUrl
-      : (currentConfig as { apiKey: string }).apiKey;
-  const credentialLabel = activeProviderId === 'ollama' ? 'Base URL' : 'API key';
-  const credentialPlaceholder = activeProviderId === 'ollama' ? 'http://localhost:11434' : 'sk-...';
+  const [agentTesting, setAgentTesting] = useState(false);
+  const [agentStatus, setAgentStatus] = useState<'connected' | 'error' | 'not-connected'>('not-connected');
+  const [agentError, setAgentError] = useState<string | null>(null);
 
   const handleConnectWebsite = async () => {
     const validation = validateWebsiteUrl(pendingBaseUrl);
@@ -140,8 +127,10 @@ export default function ConnectionsPage() {
       const bearerToken = token ?? '';
       login(bearerToken);
       webMCPService.setBearerToken(bearerToken);
+      setAuthConfig({ authMode, bearerToken });
     } else {
       webMCPService.setBrowserSessionAuth();
+      setAuthConfig({ authMode });
     }
     webMCPService.setBaseUrl(normalizedUrl);
     setBaseUrl(normalizedUrl);
@@ -164,33 +153,57 @@ export default function ConnectionsPage() {
     }
   };
 
-  const handleTestProvider = async () => {
-    setProviderTesting(true);
-    setProviderConnectionError(activeProviderId, null);
-    setProviderConnectionStatus(activeProviderId, 'not-connected');
+  const handleTestAgent = async () => {
+    setAgentTesting(true);
+    setAgentStatus('not-connected');
+    setAgentError(null);
 
     try {
-      const provider = providerManager.getProvider(activeProviderId, configs);
-      await provider.testConnection();
-      const models = await provider.getAvailableModels();
-      setAvailableModels(activeProviderId, models);
-      if (models.length > 0 && !models.includes(currentConfig.model)) {
-        updateConfig(activeProviderId, { model: models[0] } as never);
-      }
-      setProviderConnectionStatus(activeProviderId, 'connected');
-    } catch (err) {
-      setProviderConnectionStatus(activeProviderId, 'error');
-      setProviderConnectionError(
-        activeProviderId,
-        err instanceof Error ? err.message : 'Provider connection failed'
-      );
-    } finally {
-      setProviderTesting(false);
-    }
-  };
+      const response = await fetch(`${agentUrl.replace(/\/$/, '')}/health`);
+      const payload = await response.json() as {
+        ok?: boolean;
+        runtime?: string;
+        defaultModelProvider?: string;
+        ollamaBaseUrl?: string;
+        ollamaModel?: string;
+      };
 
-  const handleDisconnectProvider = () => {
-    disconnectProvider(activeProviderId);
+      if (!response.ok || !payload.ok) {
+        throw new Error(`Local agent health check failed with HTTP ${response.status}`);
+      }
+
+      if (payload.runtime !== 'strands-local') {
+        throw new Error('This URL is not a Strands local agent service.');
+      }
+
+      if (!payload.defaultModelProvider) {
+        throw new Error('Local agent is running an older build. Stop npm run agent:server and start it again.');
+      }
+
+      const modelResponse = await fetch(`${agentUrl.replace(/\/$/, '')}/model-health`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          modelProvider,
+          ollamaBaseUrl,
+          ollamaModel,
+        }),
+      });
+      const modelPayload = await modelResponse.json() as { ok?: boolean; error?: string };
+      if (!modelResponse.ok || !modelPayload.ok) {
+        throw new Error(modelPayload.error ?? 'Selected model cannot be used by the local agent.');
+      }
+
+      setAgentStatus('connected');
+      setAgentError(`Running. Server default: ${payload.defaultModelProvider}${
+        payload.defaultModelProvider === 'ollama' ? ` (${payload.ollamaModel} at ${payload.ollamaBaseUrl})` : ''
+      }. UI selected: ${modelProvider}.`);
+    } catch (err) {
+      setAgentStatus('error');
+      setAgentError(err instanceof Error ? err.message : 'Could not reach local Strands agent.');
+    } finally {
+      setAgentTesting(false);
+    }
   };
 
   const handleDisconnectWebsite = () => {
@@ -225,11 +238,11 @@ export default function ConnectionsPage() {
           <div>
             <h1 className="text-base font-semibold text-slate-950">AI chat setup</h1>
             <p className="mt-1 text-sm text-slate-500">
-              Connect a model, verify a customer session, discover tools, then run app actions from chat.
+              Connect the local agent, verify a customer session, discover tools, then run app actions from chat.
             </p>
           </div>
           <div className="grid grid-cols-2 gap-2 text-xs sm:flex">
-            <StatusPill label="AI" ready={providerStatus === 'connected'} />
+            <StatusPill label="Local agent" ready={agentStatus === 'connected'} />
             <StatusPill label="Website" ready={status === 'connected'} />
             <StatusPill label="Auth" ready={authMode === 'browser-session' || Boolean(tokenInput.trim())} />
             <StatusPill label="Tools" ready={tools.length > 0} />
@@ -238,58 +251,95 @@ export default function ConnectionsPage() {
 
         <section className="grid gap-4 lg:grid-cols-[360px_1fr]">
           <div className="space-y-4">
-            <Panel icon={Bot} title="1. AI provider" subtitle="Claude, Gemini, Ollama, or OpenAI">
-              <div className="grid grid-cols-2 gap-2">
-                {PROVIDERS.map((id) => (
-                  <button
-                    key={id}
-                    type="button"
-                    onClick={() => setActiveProvider(id)}
-                    className={`rounded-md border px-3 py-2 text-left text-sm font-medium transition-colors ${
-                      activeProviderId === id
-                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
-                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
-                    }`}
-                  >
-                    {PROVIDER_LABELS[id]}
-                  </button>
-                ))}
-              </div>
-
-              <Field label={credentialLabel}>
+            <Panel icon={Bot} title="1. Local Strands agent" subtitle="Model and MCP servers run outside the browser">
+              <Field label="Agent service URL">
                 <Input
-                  type={activeProviderId === 'ollama' ? 'url' : 'password'}
-                  value={currentCredential}
-                  placeholder={credentialPlaceholder}
-                  onChange={(event) =>
-                    updateConfig(activeProviderId, {
-                      ...(activeProviderId === 'ollama'
-                        ? { baseUrl: event.target.value }
-                        : { apiKey: event.target.value }),
-                    } as never)
-                  }
+                  type="url"
+                  value={agentUrl}
+                  placeholder="http://localhost:8787"
+                  onChange={(event) => setAgentUrl(event.target.value)}
                 />
+                <p className="text-xs font-normal text-slate-500">
+                  Start this once with <span className="font-mono">npm run agent:server</span>. Model settings below are sent to it from the UI.
+                </p>
               </Field>
 
-              <Field label="Model">
-                <ModelInput
-                  model={currentConfig.model}
-                  options={providerOptions}
-                  onChange={(model) => updateConfig(activeProviderId, { model } as never)}
-                />
+              <Field label="Model provider">
+                <div className="grid grid-cols-3 gap-2">
+                  {(['ollama', 'openai', 'bedrock'] as StrandsModelProvider[]).map((id) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setModelProvider(id)}
+                      className={`rounded-md border px-3 py-2 text-sm font-medium capitalize ${
+                        modelProvider === id
+                          ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                          : 'border-slate-200 bg-white text-slate-600'
+                      }`}
+                    >
+                      {id}
+                    </button>
+                  ))}
+                </div>
               </Field>
+
+              {modelProvider === 'ollama' ? (
+                <>
+                  <Field label="Ollama URL">
+                    <Input
+                      type="url"
+                      value={ollamaBaseUrl}
+                      placeholder="http://127.0.0.1:11434"
+                      onChange={(event) => setOllamaConfig({ baseUrl: event.target.value })}
+                    />
+                  </Field>
+                  <Field label="Ollama model">
+                    <Input
+                      value={ollamaModel}
+                      placeholder="qwen2.5:7b"
+                      onChange={(event) => setOllamaConfig({ model: event.target.value })}
+                    />
+                    <p className="text-xs font-normal text-slate-500">
+                      Use a tool-capable Ollama model. <span className="font-mono">gemma3:1b</span> does not support tools.
+                    </p>
+                  </Field>
+                </>
+              ) : null}
+
+              {modelProvider === 'openai' ? (
+                <>
+                  <Field label="OpenAI API key">
+                    <Input
+                      type="password"
+                      value={openAiApiKey}
+                      placeholder="sk-..."
+                      onChange={(event) => setOpenAiConfig({ apiKey: event.target.value })}
+                    />
+                  </Field>
+                  <Field label="OpenAI model">
+                    <Input
+                      value={openAiModel}
+                      placeholder="gpt-4o-mini"
+                      onChange={(event) => setOpenAiConfig({ model: event.target.value })}
+                    />
+                  </Field>
+                </>
+              ) : null}
+
+              {modelProvider === 'bedrock' ? (
+                <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                  Bedrock uses AWS credentials from the local agent process environment.
+                </div>
+              ) : null}
 
               <ConnectionFooter
-                status={providerStatus}
-                message={connectionError[activeProviderId]}
-                actionLabel={providerTesting ? 'Testing...' : 'Test provider'}
-                loading={providerTesting}
-                onAction={handleTestProvider}
-                secondaryLabel={providerStatus === 'connected' ? 'Disconnect' : undefined}
-                onSecondary={providerStatus === 'connected' ? handleDisconnectProvider : undefined}
+                status={agentStatus}
+                message={agentError}
+                actionLabel={agentTesting ? 'Checking...' : 'Test local agent'}
+                loading={agentTesting}
+                onAction={handleTestAgent}
               />
             </Panel>
-
           </div>
 
           <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
@@ -500,32 +550,4 @@ function ConnectionFooter({
       </div>
     </div>
   );
-}
-
-function ModelInput({
-  model,
-  options,
-  onChange,
-}: {
-  model: string;
-  options: string[];
-  onChange: (model: string) => void;
-}) {
-  if (options.length > 0) {
-    return (
-      <select
-        value={model}
-        onChange={(event) => onChange(event.target.value)}
-        className="h-9 rounded-md border border-slate-300 bg-white px-3 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-      >
-        {options.map((option) => (
-          <option key={option} value={option}>
-            {option}
-          </option>
-        ))}
-      </select>
-    );
-  }
-
-  return <Input value={model} placeholder="Model name" onChange={(event) => onChange(event.target.value)} />;
 }

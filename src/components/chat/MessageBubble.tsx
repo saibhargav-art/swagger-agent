@@ -1,13 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
-import { User, Bot, CheckCircle, XCircle, Loader2, Wrench } from 'lucide-react';
-import { cn } from '@/utils/cn';
-import { Badge } from '@/components/ui/index';
+import { useState } from 'react';
+import { Bot, CheckCircle, Loader2, User, Wrench, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
-import { useNavigate } from 'react-router-dom';
-import { formatTime, formatDuration } from '@/utils/format';
-import { webMCPService } from '@/services/webmcp/WebMCPService';
+import { strandsLocalRuntime } from '@/services/runtime';
 import { useChatStore } from '@/store/chatStore';
-import type { Message, ToolCall, ToolForm, ToolOption } from '@/types/chat';
+import { cn } from '@/utils/cn';
+import { formatDuration, formatTime } from '@/utils/format';
+import type { Message, RuntimeConfirmation, ToolCall } from '@/types/chat';
 
 interface Props {
   message: Message;
@@ -15,83 +13,33 @@ interface Props {
 
 export default function MessageBubble({ message }: Props) {
   const isUser = message.role === 'user';
-  const { activeConversationId, setPendingToolRequest } = useChatStore();
-  const [selectedForm, setSelectedForm] = useState<ToolForm | null>(message.toolForm ?? null);
   const [cancelled, setCancelled] = useState(false);
-  const [actionNotice, setActionNotice] = useState('');
-  const [hideToolOptions, setHideToolOptions] = useState(false);
   const visibleContent = cancelled ? "Okay, I won't proceed with that request." : stripToolPayload(message.content);
-  const visibleToolOptions = hideToolOptions ? [] : message.toolOptions ?? [];
-  const hasActionCard = !isUser && !cancelled && Boolean(visibleToolOptions.length || selectedForm || actionNotice);
-
-  useEffect(() => {
-    setSelectedForm(message.toolForm ?? null);
-    setCancelled(false);
-    setActionNotice('');
-    setHideToolOptions(false);
-  }, [message.id, message.toolForm]);
-
-  const handleToolOptionSelect = (option: ToolOption) => {
-    if (option.fields.some((field) => field.name === 'id')) {
-      if (activeConversationId) {
-        setPendingToolRequest(activeConversationId, {
-          toolName: option.toolName,
-          params: option.initialParams ?? {},
-        });
-      }
-      setSelectedForm(null);
-      setHideToolOptions(true);
-      setActionNotice(
-        `Selected ${option.title}. Which record should I use? Enter a name or search text from the connected app, and I will look it up.`
-      );
-      return;
-    }
-
-    setActionNotice('');
-    setHideToolOptions(true);
-    setSelectedForm({
-      toolName: option.toolName,
-      title: option.title,
-      description: option.description,
-      fields: option.fields,
-      initialParams: option.initialParams,
-    });
-  };
 
   return (
     <div className={cn('flex gap-3', isUser && 'flex-row-reverse')}>
       <div
         className={cn(
           'mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white',
-          isUser ? 'bg-indigo-600' : 'bg-slate-700'
+          isUser ? 'bg-indigo-600' : 'bg-slate-700',
         )}
       >
         {isUser ? <User size={14} /> : <Bot size={14} />}
       </div>
 
       <div className={cn('flex max-w-[88%] flex-col gap-2 sm:max-w-[78%]', isUser && 'items-end')}>
-        {hasActionCard ? (
-          <ToolActionsCard
+        {!isUser && message.runtimeConfirmation ? (
+          <RuntimeConfirmationCard
             messageId={message.id}
             content={visibleContent}
-            notice={actionNotice}
-            options={visibleToolOptions}
-            selectedForm={selectedForm}
-            onSelect={handleToolOptionSelect}
-            onCancel={() => {
-              setSelectedForm(null);
-              setCancelled(true);
-              setActionNotice('');
-              setHideToolOptions(true);
-            }}
+            confirmation={message.runtimeConfirmation}
+            onCancel={() => setCancelled(true)}
           />
         ) : visibleContent ? (
           <div
             className={cn(
               'whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed',
-              isUser
-                ? 'rounded-tr-md bg-indigo-600 text-white'
-                : 'rounded-tl-md bg-slate-100 text-slate-800'
+              isUser ? 'rounded-tr-md bg-indigo-600 text-white' : 'rounded-tl-md bg-slate-100 text-slate-800',
             )}
           >
             {visibleContent}
@@ -100,7 +48,7 @@ export default function MessageBubble({ message }: Props) {
 
         {message.toolCall ? <ToolCallCard toolCall={message.toolCall} /> : null}
 
-        {!visibleContent && !message.toolCall && !hasActionCard && !message.isStreaming ? (
+        {!visibleContent && !message.toolCall && !message.runtimeConfirmation && !message.isStreaming ? (
           <div className="rounded-2xl rounded-tl-md bg-slate-100 px-4 py-3 text-sm text-slate-500">
             I could not produce a usable response. Try again or check Connections.
           </div>
@@ -112,380 +60,74 @@ export default function MessageBubble({ message }: Props) {
   );
 }
 
-function ToolActionsCard({
+function RuntimeConfirmationCard({
   messageId,
   content,
-  notice,
-  options,
-  selectedForm,
-  onSelect,
+  confirmation,
   onCancel,
 }: {
   messageId: string;
   content: string;
-  notice?: string;
-  options: ToolOption[];
-  selectedForm: ToolForm | null;
-  onSelect: (option: ToolOption) => void;
+  confirmation: RuntimeConfirmation;
   onCancel: () => void;
 }) {
+  const { activeConversationId, updateMessage } = useChatStore();
+  const [status, setStatus] = useState<'idle' | 'executing'>('idle');
+  const [error, setError] = useState('');
+  const rows = Object.entries(confirmation.details).filter(
+    ([, value]) => value !== undefined && value !== null && String(value).trim() !== '',
+  );
+
+  const finish = async (approved: boolean) => {
+    if (!activeConversationId || status === 'executing') return;
+    setStatus('executing');
+    setError('');
+
+    try {
+      const result = await strandsLocalRuntime.confirm(confirmation.runId, approved);
+      updateMessage(activeConversationId, messageId, {
+        content: result.content ?? (approved ? 'Action completed.' : 'Cancelled the pending action.'),
+        runtimeConfirmation: undefined,
+        isStreaming: false,
+      });
+      if (!approved) onCancel();
+    } catch (err) {
+      setStatus('idle');
+      setError(err instanceof Error ? err.message : 'Could not resolve the pending action.');
+    }
+  };
+
   return (
     <div className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-sm shadow-sm">
       {content ? <div className="whitespace-pre-wrap leading-relaxed text-slate-800">{content}</div> : null}
-      {options.length ? (
-        <div className="mt-3 border-t border-slate-100 pt-3">
-          <ToolOptions options={options} onSelect={onSelect} />
-        </div>
-      ) : null}
-      {notice ? (
-        <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-700">
-          {notice}
-        </div>
-      ) : null}
-      {selectedForm ? (
-        <div className="mt-3 border-t border-slate-100 pt-3">
-          <ToolFormCard messageId={messageId} form={selectedForm} onCancel={onCancel} framed={false} />
-        </div>
-      ) : null}
-    </div>
-  );
-}
-
-function ToolOptions({
-  options,
-  onSelect,
-}: {
-  options: ToolOption[];
-  onSelect: (option: ToolOption) => void;
-}) {
-  const [selectedToolName, setSelectedToolName] = useState(options[0]?.toolName ?? '');
-  const selected = options.find((option) => option.toolName === selectedToolName);
-
-  useEffect(() => {
-    setSelectedToolName(options[0]?.toolName ?? '');
-  }, [options]);
-
-  return (
-    <div className="grid w-full gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-      <select
-        value={selectedToolName}
-        onChange={(event) => setSelectedToolName(event.target.value)}
-        className="h-10 min-w-0 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-      >
-        {options.map((option) => (
-          <option key={option.toolName} value={option.toolName}>
-            {option.title}
-          </option>
-        ))}
-      </select>
-      <Button
-        variant="outline"
-        size="sm"
-        disabled={!selected}
-        onClick={() => selected && onSelect(selected)}
-      >
-        Continue
-      </Button>
-      {selected?.description ? (
-        <div className="text-xs text-slate-500 sm:col-span-2">{selected.description}</div>
-      ) : null}
-    </div>
-  );
-}
-
-function ToolFormCard({
-  messageId,
-  form,
-  onCancel,
-  framed = true,
-}: {
-  messageId: string;
-  form: ToolForm;
-  onCancel: () => void;
-  framed?: boolean;
-}) {
-  const { activeConversationId, setPendingToolRequest, updateMessage } = useChatStore();
-  const isConfirmation = form.mode === 'confirm';
-  const executionLockedRef = useRef(false);
-  const [values, setValues] = useState<Record<string, string>>(() =>
-    Object.fromEntries(
-      form.fields.map((field) => [field.name, form.initialParams?.[field.name]?.toString() ?? ''])
-    )
-  );
-  const [status, setStatus] = useState<'idle' | 'executing' | 'success' | 'error'>('idle');
-  const [result, setResult] = useState<unknown>(null);
-  const [error, setError] = useState('');
-  const [readyToConfirm, setReadyToConfirm] = useState(false);
-  const isCreateAction = /\b(create|add|new)\b/i.test(`${form.toolName} ${form.description ?? ''}`);
-  const isWriteAction = /\b(create|update|delete|approve|write|refund|quota|admin|mutate|set|remove)\b/i.test(
-    `${form.toolName} ${form.description ?? ''}`
-  );
-  const confirmAction = actionVerb(form.title);
-
-  const missing = form.fields
-    .filter((field) => {
-      if (field.required || field.name === 'id') return true;
-      if (isWriteAction && field.enum?.length) return true;
-      return isCreateAction && /\b(name|title|email|customer|account|user)\b/i.test(`${field.name} ${field.description ?? ''}`);
-    })
-    .filter((field) => !values[field.name]?.trim())
-    .map((field) => field.name);
-  const needsInputInConfirmation = isConfirmation && (
-    missing.length > 0 || form.fields.some((field) => field.options?.length)
-  );
-  const showReadOnlyConfirmation = isConfirmation && (!needsInputInConfirmation || readyToConfirm);
-  const confirmationRows = Object.entries({
-    ...(form.confirmationDetails ?? {}),
-    ...values,
-  }).filter(
-    ([, value]) => value !== undefined && value !== null && String(value).trim() !== ''
-  );
-
-  useEffect(() => {
-    setValues(
-      Object.fromEntries(
-        form.fields.map((field) => [field.name, form.initialParams?.[field.name]?.toString() ?? ''])
-      )
-    );
-    setStatus('idle');
-    setResult(null);
-    setError('');
-    setReadyToConfirm(false);
-    executionLockedRef.current = false;
-  }, [form]);
-
-  const execute = async () => {
-    if (executionLockedRef.current || status === 'executing' || status === 'success') return;
-
-    if (missing.length > 0) {
-      const missingText = missing.map((name) => {
-        const field = form.fields.find((item) => item.name === name);
-        if (field?.enum?.length) return `${name} (${field.enum.join(', ')})`;
-        if (/status|state/i.test(`${name} ${field?.description ?? ''}`)) {
-          return `${name} (allowed values were not provided by the connected app)`;
-        }
-        return name;
-      });
-      setError(`Enter required fields: ${missingText.join(', ')}`);
-      return;
-    }
-
-    if (isConfirmation && needsInputInConfirmation && !readyToConfirm) {
-      setError('');
-      setReadyToConfirm(true);
-      return;
-    }
-
-    executionLockedRef.current = true;
-    const params = Object.fromEntries(
-      form.fields
-        .filter((field) => values[field.name]?.trim())
-        .map((field) => [field.name, coerceValue(values[field.name], field.type)])
-    );
-
-    setStatus('executing');
-    setError('');
-    setResult(null);
-    const startedAt = Date.now();
-    if (activeConversationId) {
-      updateMessage(activeConversationId, messageId, {
-        toolCall: {
-          toolName: form.toolName,
-          params,
-          status: 'executing',
-          startedAt,
-        },
-      });
-    }
-
-    try {
-      const response = await webMCPService.executeTool(form.toolName, params);
-      if (activeConversationId) {
-        setPendingToolRequest(activeConversationId, null);
-        updateMessage(activeConversationId, messageId, {
-          content: summarizeResult(form.toolName, response),
-          toolForm: undefined,
-          toolCall: {
-            toolName: form.toolName,
-            params,
-            status: 'success',
-            result: response,
-            startedAt,
-            completedAt: Date.now(),
-          },
-        });
-      }
-      setResult(response);
-      setStatus('success');
-    } catch (err) {
-      executionLockedRef.current = false;
-      setError(err instanceof Error ? friendlyError(err.message) : 'Tool execution failed.');
-      setStatus('error');
-      if (activeConversationId) {
-        updateMessage(activeConversationId, messageId, {
-          toolCall: {
-            toolName: form.toolName,
-            params,
-            status: 'error',
-            error: err instanceof Error ? friendlyError(err.message) : 'Tool execution failed.',
-            startedAt,
-            completedAt: Date.now(),
-          },
-        });
-      }
-    }
-  };
-
-  const cancel = () => {
-    if (activeConversationId) {
-      setPendingToolRequest(activeConversationId, null);
-    }
-    onCancel();
-  };
-
-  return (
-    <div className={framed ? 'w-full rounded-2xl border border-slate-200 bg-white p-4 text-sm' : 'w-full text-sm'}>
-      <div className="mb-3">
-        <div className="font-medium text-slate-900">{form.title}</div>
-        {form.description ? <div className="mt-0.5 text-xs text-slate-500">{form.description}</div> : null}
-      </div>
-
-      {showReadOnlyConfirmation ? (
-        <div className="grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
-          {confirmationRows.map(([key, value]) => (
+      <div className="mt-3 border-t border-slate-100 pt-3">
+        <div className="font-medium text-slate-900">{confirmation.title}</div>
+        {rows.length ? (
+          <div className="mt-3 grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+            {rows.map(([key, value]) => (
               <div key={key} className="grid grid-cols-[120px_1fr] gap-2 text-xs">
-                <span className="font-medium text-slate-500">{key}</span>
-                <span className="break-words text-slate-900">{String(value)}</span>
+                <span className="font-medium text-slate-500">{humanizeFieldName(key)}</span>
+                <span className="break-words text-slate-900">{formatCell(value)}</span>
               </div>
-          ))}
-        </div>
-      ) : (
-        <div className="grid gap-2">
-          {isConfirmation && !needsInputInConfirmation && confirmationRows.length > 0 ? (
-            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
-              {confirmationRows.map(([key, value]) => (
-                <div key={key} className="grid grid-cols-[120px_1fr] gap-2 text-xs">
-                  <span className="font-medium text-slate-500">{key}</span>
-                  <span className="break-words text-slate-900">{String(value)}</span>
-                </div>
-              ))}
-            </div>
-          ) : null}
-          {form.fields.map((field) => (
-            <label key={field.name} className="grid gap-1 text-xs font-medium text-slate-600">
-              {field.name === 'id' && field.options?.length ? 'Record' : field.name}
-              {field.options?.length || field.enum?.length ? (
-                <select
-                  value={values[field.name] ?? ''}
-                  onChange={(event) => setValues((prev) => ({ ...prev, [field.name]: event.target.value }))}
-                  className="h-10 rounded-xl border border-slate-300 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                >
-                  <option value="">Select...</option>
-                  {field.options?.length
-                    ? field.options.map((item) => (
-                        <option key={item.value} value={item.value}>
-                          {item.label}
-                        </option>
-                      ))
-                    : field.enum?.map((item) => (
-                        <option key={item} value={item}>
-                          {item}
-                        </option>
-                      ))}
-                </select>
-              ) : (
-                <input
-                  value={values[field.name] ?? ''}
-                  onChange={(event) => setValues((prev) => ({ ...prev, [field.name]: event.target.value }))}
-                  type={field.type === 'number' ? 'number' : 'text'}
-                  placeholder={field.description || field.name}
-                  className="h-10 rounded-xl border border-slate-300 px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                />
-              )}
-              {!field.enum?.length && !field.options?.length && /status|state/i.test(`${field.name} ${field.description ?? ''}`) ? (
-                <span className="text-[11px] font-normal text-amber-700">
-                  The connected app did not provide allowed values for this field.
-                </span>
-              ) : null}
-            </label>
-          ))}
-        </div>
-      )}
-
-      {error ? <p className="mt-2 text-xs text-red-600">{error}</p> : null}
-      {status === 'success' ? (
-        <div className="mt-2 text-xs font-medium text-emerald-700">
-          {summarizeResult(form.toolName, result)}
-          <ResultPreview result={result} />
-        </div>
-      ) : null}
-
-      {status !== 'success' ? (
+            ))}
+          </div>
+        ) : null}
+        {error ? <p className="mt-2 text-xs text-red-600">{error}</p> : null}
         <div className="mt-3 flex justify-end gap-2">
-          <Button variant="ghost" size="sm" onClick={cancel} disabled={status === 'executing'}>
+          <Button variant="ghost" size="sm" onClick={() => finish(false)} disabled={status === 'executing'}>
             Cancel
           </Button>
-          <Button size="sm" onClick={execute} disabled={status === 'executing'}>
+          <Button size="sm" onClick={() => finish(true)} disabled={status === 'executing'}>
             {status === 'executing' ? <Loader2 size={13} className="animate-spin" /> : null}
-            {isConfirmation
-              ? (needsInputInConfirmation && !readyToConfirm ? 'Continue' : `Confirm ${confirmAction}`)
-              : 'Execute'}
+            Confirm
           </Button>
         </div>
-      ) : null}
+      </div>
     </div>
   );
-}
-
-function coerceValue(value: string, type: string) {
-  if (type === 'number') return Number(value);
-  if (type === 'boolean') return value === 'true';
-  return value;
-}
-
-function actionVerb(title: string) {
-  const first = title.trim().split(/\s+/)[0];
-  return first ? first.charAt(0).toUpperCase() + first.slice(1).toLowerCase() : 'Action';
-}
-
-function stripToolPayload(content: string) {
-  return content
-    .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
-    .replace(/^\s*\{[\s\S]*"tool"\s*:\s*"[^"]+"[\s\S]*"params"\s*:\s*\{[\s\S]*\}\s*\}\s*$/i, '')
-    .trim();
-}
-
-function summarizeResult(toolName: string, result: unknown): string {
-  const action = humanizeToolName(toolName);
-
-  if (Array.isArray(result)) {
-    if (result.length === 0) return 'No matching records found.';
-    return `Found ${result.length} record${result.length === 1 ? '' : 's'}.`;
-  }
-
-  if (result && typeof result === 'object') {
-    const record = result as Record<string, unknown>;
-    const id = record.order_id ?? record.orderId ?? record.id ?? record.ID;
-
-    if (typeof record.message === 'string') return record.message;
-    if (id !== undefined) return `Success. ${action} completed: ${String(id)}`;
-  }
-
-  if (typeof result === 'string' && result.trim()) return result;
-  return `Success. ${action} completed.`;
-}
-
-function humanizeToolName(name: string): string {
-  return name
-    .replace(/([a-z])([A-Z])/g, '$1 $2')
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/^./, (char) => char.toUpperCase());
 }
 
 function ToolCallCard({ toolCall }: { toolCall: ToolCall }) {
-  const navigate = useNavigate();
   const { toolName, status, result, error, startedAt, completedAt } = toolCall;
   const duration = completedAt ? completedAt - startedAt : undefined;
 
@@ -501,48 +143,38 @@ function ToolCallCard({ toolCall }: { toolCall: ToolCall }) {
       </div>
 
       <div className="px-3 py-2">
-        {status === 'pending' ? <ToolStep label={`Found tool: ${toolName}`} /> : null}
         {status === 'executing' ? (
-          <div className="space-y-2">
-            <ToolStep label={`Found tool: ${toolName}`} done />
-            <div className="flex items-center gap-2 text-xs text-slate-600">
-              <Loader2 size={13} className="animate-spin" />
-              Executing {toolName}
-            </div>
+          <div className="flex items-center gap-2 text-xs text-slate-600">
+            <Loader2 size={13} className="animate-spin" />
+            Executing {toolName}
           </div>
         ) : null}
-
         {status === 'success' ? (
           <div className="space-y-2">
-            <ToolStep label={`Found tool: ${toolName}`} done />
-            <ToolStep label={`Executed ${toolName}`} done />
-            <p className="text-xs font-medium text-emerald-700">{summarizeResult(toolName, result)}</p>
+            <p className="text-xs font-medium text-emerald-700">Tool completed.</p>
             <ResultPreview result={result} />
           </div>
         ) : null}
-
-        {status === 'error' && error ? (
-          <div className="flex flex-col gap-2">
-            <ToolStep label={`Found tool: ${toolName}`} done />
-            <p className="text-xs text-red-600">{friendlyError(error)}</p>
-            <div>
-              <Button variant="outline" size="sm" onClick={() => navigate('/connections')}>
-                Open Connections
-              </Button>
-            </div>
-          </div>
-        ) : null}
+        {status === 'error' && error ? <p className="text-xs text-red-600">{error}</p> : null}
       </div>
     </div>
   );
 }
 
-function ToolStep({ label, done }: { label: string; done?: boolean }) {
+function StatusBadge({ status }: { status: ToolCall['status'] }) {
+  const classes = {
+    pending: 'border-slate-200 bg-slate-50 text-slate-600',
+    executing: 'border-blue-200 bg-blue-50 text-blue-700',
+    success: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+    error: 'border-red-200 bg-red-50 text-red-700',
+  }[status];
+
   return (
-    <div className="flex items-center gap-2 text-xs text-slate-600">
-      {done ? <CheckCircle size={13} className="text-emerald-600" /> : <Loader2 size={13} className="animate-spin" />}
-      {label}
-    </div>
+    <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${classes}`}>
+      {status === 'success' ? <CheckCircle size={12} /> : null}
+      {status === 'error' ? <XCircle size={12} /> : null}
+      {status}
+    </span>
   );
 }
 
@@ -581,11 +213,6 @@ function ResultPreview({ result }: { result: unknown }) {
             </tbody>
           </table>
         </div>
-        {records.length > visibleRows.length ? (
-          <div className="border-t border-slate-100 bg-slate-50 px-3 py-2 text-[11px] text-slate-500">
-            Showing {visibleRows.length} of {records.length} records.
-          </div>
-        ) : null}
       </div>
     );
   }
@@ -606,6 +233,13 @@ function ResultPreview({ result }: { result: unknown }) {
   );
 }
 
+function stripToolPayload(content: string) {
+  return content
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+    .replace(/^\s*\{[\s\S]*"tool"\s*:\s*"[^"]+"[\s\S]*"params"\s*:\s*\{[\s\S]*\}\s*\}\s*$/i, '')
+    .trim();
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
@@ -615,17 +249,7 @@ function shouldDisplayField(key: string) {
 }
 
 function displayColumns(records: Array<Record<string, unknown>>) {
-  const preferred = [
-    'name',
-    'customer_name',
-    'title',
-    'email',
-    'amount',
-    'status',
-    'state',
-    'created_at',
-    'updated_at',
-  ];
+  const preferred = ['name', 'customer_name', 'title', 'email', 'amount', 'status', 'state', 'created_at', 'updated_at'];
   const available = new Set(records.flatMap((record) => Object.keys(record).filter((key) => shouldDisplayField(key))));
   const ordered = preferred.filter((key) => available.has(key));
   const rest = [...available].filter((key) => !ordered.includes(key)).slice(0, Math.max(0, 6 - ordered.length));
@@ -648,41 +272,7 @@ function formatCell(value: unknown) {
   const text = String(value);
   const parsedDate = /^\d{4}-\d{2}-\d{2}T/.test(text) ? new Date(text) : null;
   if (parsedDate && !Number.isNaN(parsedDate.getTime())) {
-    return parsedDate.toLocaleString();
+    return parsedDate.toLocaleString([], { dateStyle: 'short', timeStyle: 'short' });
   }
   return text;
-}
-
-function friendlyError(error: string) {
-  if (/failed to fetch|network|cors/i.test(error)) {
-    return 'Tool execution failed because the backend request could not be reached. Check the API server URL, CORS settings, and required headers in webapi.json.';
-  }
-  if (/401|session|sign in|auth/i.test(error)) {
-    return 'Tool execution failed because the customer session is invalid or expired. Paste the Supabase access_token for the same customer app, not the anon key or refresh token, then reconnect.';
-  }
-  if (/403|permission|role|scope/i.test(error)) {
-    return 'Tool execution failed because this user does not have the required role or scope.';
-  }
-  return error;
-}
-
-function StatusBadge({ status }: { status: ToolCall['status'] }) {
-  switch (status) {
-    case 'pending':
-      return <Badge variant="muted">Found</Badge>;
-    case 'executing':
-      return <Badge variant="warning">Executing</Badge>;
-    case 'success':
-      return (
-        <span className="flex items-center gap-1 text-xs font-medium text-emerald-600">
-          <CheckCircle size={12} /> Success
-        </span>
-      );
-    case 'error':
-      return (
-        <span className="flex items-center gap-1 text-xs font-medium text-red-600">
-          <XCircle size={12} /> Failed
-        </span>
-      );
-  }
 }

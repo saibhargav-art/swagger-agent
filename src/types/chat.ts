@@ -12,31 +12,10 @@ export interface ToolCall {
   completedAt?: number;
 }
 
-export interface ToolFormField {
-  name: string;
-  type: string;
-  description?: string;
-  required: boolean;
-  enum?: string[];
-  options?: Array<{ label: string; value: string }>;
-}
-
-export interface ToolForm {
-  toolName: string;
+export interface RuntimeConfirmation {
+  runId: string;
   title: string;
-  description?: string;
-  mode?: 'input' | 'confirm';
-  fields: ToolFormField[];
-  initialParams?: Record<string, unknown>;
-  confirmationDetails?: Record<string, unknown>;
-}
-
-export interface ToolOption {
-  toolName: string;
-  title: string;
-  description?: string;
-  fields: ToolFormField[];
-  initialParams?: Record<string, unknown>;
+  details: Record<string, unknown>;
 }
 
 export interface Message {
@@ -44,8 +23,7 @@ export interface Message {
   role: MessageRole;
   content: string;
   toolCall?: ToolCall;
-  toolForm?: ToolForm;
-  toolOptions?: ToolOption[];
+  runtimeConfirmation?: RuntimeConfirmation;
   timestamp: number;
   isStreaming?: boolean;
 }

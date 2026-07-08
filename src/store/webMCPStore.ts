@@ -2,12 +2,15 @@ import { create } from 'zustand';
 
 interface WebMCPState {
   baseUrl: string;
+  authMode: 'bearer' | 'browser-session';
+  bearerToken: string;
   status: 'connected' | 'error' | 'not-connected';
   error: string | null;
   toolCount: number;
   appName: string | null;
   appDescription: string | null;
   setBaseUrl: (baseUrl: string) => void;
+  setAuthConfig: (config: { authMode: 'bearer' | 'browser-session'; bearerToken?: string }) => void;
   setStatus: (status: 'connected' | 'error' | 'not-connected') => void;
   setError: (error: string | null) => void;
   setToolCount: (count: number) => void;
@@ -17,6 +20,8 @@ interface WebMCPState {
 
 export const useWebMCPStore = create<WebMCPState>()((set) => ({
   baseUrl: import.meta.env.VITE_WEBMCP_BASE_URL ?? '',
+  authMode: 'bearer',
+  bearerToken: '',
   status: 'not-connected',
   error: null,
   toolCount: 0,
@@ -31,6 +36,11 @@ export const useWebMCPStore = create<WebMCPState>()((set) => ({
       appName: null,
       appDescription: null,
     }),
+  setAuthConfig: (config) =>
+    set({
+      authMode: config.authMode,
+      bearerToken: config.bearerToken?.trim() ?? '',
+    }),
   setStatus: (status) => set({ status }),
   setError: (error) => set({ error }),
   setToolCount: (toolCount) => set({ toolCount }),
@@ -42,6 +52,8 @@ export const useWebMCPStore = create<WebMCPState>()((set) => ({
   disconnect: () =>
     set({
       baseUrl: '',
+      authMode: 'bearer',
+      bearerToken: '',
       status: 'not-connected',
       error: null,
       toolCount: 0,

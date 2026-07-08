@@ -8,6 +8,7 @@ interface Props {
   messages: Message[];
   isStreaming: boolean;
   providerConnected: boolean;
+  providerLabel?: string;
   websiteConnected: boolean;
   tools: Tool[];
   onGoToConnections: () => void;
@@ -17,6 +18,7 @@ export default function MessageList({
   messages,
   isStreaming,
   providerConnected,
+  providerLabel = 'AI provider',
   websiteConnected,
   tools,
   onGoToConnections,
@@ -58,7 +60,7 @@ export default function MessageList({
           </div>
 
           <div className="mt-5 grid gap-3 sm:grid-cols-3">
-            <SetupStep label="AI provider" ready={providerConnected} icon={Bot} />
+            <SetupStep label={providerLabel} ready={providerConnected} icon={Bot} />
             <SetupStep label="Website session" ready={websiteConnected} icon={Globe2} />
             <SetupStep label={`${toolCount} tools discovered`} ready={toolCount > 0} icon={CheckCircle2} />
           </div>

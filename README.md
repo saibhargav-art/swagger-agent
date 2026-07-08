@@ -4,7 +4,7 @@ Single React application for AI chat plus customer website tool execution.
 
 The app connects to:
 
-- an AI provider: OpenAI, Claude, Gemini, or Ollama
+- a local Strands agent service that owns model/tool orchestration
 - a customer website that hosts `/webapi.json`
 - an authenticated customer user session, passed as bearer token or browser session cookies
 
@@ -26,10 +26,37 @@ npm run build
 npm run preview
 ```
 
+## Local Strands Agent POC
+
+This branch uses a Node-side Strands runtime in `local-agent/`.
+
+Use it to test the standard agent flow without disturbing the React chat app:
+
+```bash
+npm run agent:poc -- "list the available customer actions"
+```
+
+With a customer website connected by `/webapi.json`:
+
+```bash
+WEBMCP_BASE_URL=http://localhost:5173 WEBMCP_BEARER_TOKEN=<token> npm run agent:poc -- "search orders for vijay"
+```
+
+The Strands runtime loads WebMCP tools, can attach Browser MCP, and lets the model choose tools and parameters. Runtime policy still blocks write actions unless `ALLOW_WEBMCP_WRITES=true` is set.
+
+To route the React chat through the local Strands HTTP service:
+
+```bash
+npm run agent:server
+VITE_STRANDS_AGENT_URL=http://localhost:8787 npm run dev
+```
+
+Select Ollama/OpenAI/Bedrock from the Connections page. The browser sends only the selected model settings to the local Strands service per request.
+
 ## Connection Flow
 
 1. Open `Connections`.
-2. Configure and test one AI provider.
+2. Configure and test the local Strands agent.
 3. Enter the customer login URL and sign in.
 4. Enter the website URL that hosts `/webapi.json`.
 5. Choose auth mode:
@@ -93,7 +120,6 @@ src/
     activity/
     chat/
     layout/
-    providers/
     tools/
     ui/
   context/
@@ -101,13 +127,9 @@ src/
   pages/
     ChatPage/
     ConnectionsPage/
-  providers/
-    claude/
-    gemini/
-    ollama/
-    openai/
   services/
     ai/
+    runtime/
     webmcp/
   store/
   types/
@@ -117,12 +139,11 @@ src/
 
 ## Tool Execution UX
 
-The AI may emit a hidden tool payload internally, but the chat UI does not show raw JSON. Users see structured execution states:
+The local Strands agent decides which tools to call and what parameters to use. The chat UI does not perform manual tool matching or show raw JSON. Users see plain language responses and structured confirmation cards for write actions:
 
-- found tool
-- executing tool
-- success or permission/session error
-- concise result preview
+- read actions execute directly
+- write actions require Confirm/Cancel in the app
+- results are summarized in plain language
 
 ## Security Model
 
