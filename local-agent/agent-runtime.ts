@@ -75,7 +75,28 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
 
   if (browserOnlyRequest(input.message)) {
     const url = resolveBrowserTargetUrl(input)
-    if (url && effectiveConfig.browserMcpEnabled && effectiveConfig.browserMcpCommand) {
+    if (!url) {
+      return {
+        content: 'I need a connected website URL before I can open a page in the browser. Connect the website first, then try again.',
+        stopReason: 'endTurn',
+      }
+    }
+
+    if (!effectiveConfig.browserMcpEnabled) {
+      return {
+        content: 'Browser MCP is disabled. Enable Browser MCP in Connections, use the BrowserMCP preset, click Test local agent, then try this browser action again.',
+        stopReason: 'endTurn',
+      }
+    }
+
+    if (!effectiveConfig.browserMcpCommand) {
+      return {
+        content: 'Browser MCP is enabled but no command is configured. In Connections, click Use BrowserMCP preset or enter the Browser MCP command and args.',
+        stopReason: 'endTurn',
+      }
+    }
+
+    try {
       const result = await navigateWithBrowserMcp(effectiveConfig, url)
       return {
         content: `Opened ${url} in the connected browser session.`,
@@ -87,6 +108,20 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
             input: { url },
             result: result.result,
             ok: isSuccessfulToolResult(result.result),
+          },
+        ],
+      }
+    } catch (err) {
+      return {
+        content: `Browser MCP could not navigate to ${url}. ${err instanceof Error ? err.message : String(err)}`,
+        stopReason: 'endTurn',
+        trace: [
+          {
+            type: 'tool',
+            name: 'browser_navigate',
+            input: { url },
+            result: err instanceof Error ? err.message : String(err),
+            ok: false,
           },
         ],
       }

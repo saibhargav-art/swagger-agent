@@ -318,6 +318,7 @@ export default function ConnectionsPage() {
             <StatusPill label="Local agent" ready={agentStatus === 'connected'} />
             <StatusPill label="Website" ready={status === 'connected'} />
             <StatusPill label="Auth" ready={authMode === 'browser-session' || Boolean(tokenInput.trim())} />
+            <StatusPill label="Browser MCP" ready={!browserMcpEnabled || (agentStatus === 'connected' && Boolean(browserMcpCommand.trim()))} />
             <StatusPill label="Tools" ready={tools.length > 0} />
           </div>
         </header>
