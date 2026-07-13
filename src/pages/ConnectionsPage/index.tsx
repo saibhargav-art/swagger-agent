@@ -424,7 +424,7 @@ export default function ConnectionsPage() {
                         })
                       }
                     >
-                      Use BrowserMCP preset
+                      Reset to BrowserMCP default
                     </button>
                   </div>
                   <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700">
@@ -441,16 +441,19 @@ export default function ConnectionsPage() {
                     <Field label="Browser MCP command">
                       <Input
                         value={browserMcpCommand}
-                        placeholder="Command from your Browser MCP server docs"
+                        placeholder="npx"
                         onChange={(event) => setBrowserMcpConfig({ command: event.target.value })}
                       />
                     </Field>
                     <Field label="Browser MCP args">
                       <Input
                         value={browserMcpArgs}
-                        placeholder="Optional args from the same docs"
+                        placeholder="@browsermcp/mcp@latest"
                         onChange={(event) => setBrowserMcpConfig({ args: event.target.value })}
                       />
+                      <p className="text-xs font-normal text-slate-500">
+                        After testing, open the Browser MCP extension in Chrome and click Connect for the active tab.
+                      </p>
                     </Field>
                   </div>
                 ) : null}

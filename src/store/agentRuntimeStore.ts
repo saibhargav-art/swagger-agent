@@ -2,6 +2,9 @@ import { create } from 'zustand';
 
 export type StrandsModelProvider = 'ollama' | 'openai' | 'bedrock';
 
+const DEFAULT_BROWSER_MCP_COMMAND = 'npx';
+const DEFAULT_BROWSER_MCP_ARGS = '@browsermcp/mcp@latest';
+
 interface AgentRuntimeState {
   agentUrl: string;
   modelProvider: StrandsModelProvider;
@@ -32,8 +35,8 @@ const defaults = {
   openAiApiKey: '',
   openAiModel: import.meta.env.VITE_OPENAI_MODEL ?? 'gpt-4o-mini',
   browserMcpEnabled: import.meta.env.VITE_BROWSER_MCP_ENABLED === 'true',
-  browserMcpCommand: import.meta.env.VITE_BROWSER_MCP_COMMAND ?? '',
-  browserMcpArgs: import.meta.env.VITE_BROWSER_MCP_ARGS ?? '',
+  browserMcpCommand: import.meta.env.VITE_BROWSER_MCP_COMMAND ?? DEFAULT_BROWSER_MCP_COMMAND,
+  browserMcpArgs: import.meta.env.VITE_BROWSER_MCP_ARGS ?? DEFAULT_BROWSER_MCP_ARGS,
   context7Enabled: import.meta.env.VITE_CONTEXT7_MCP_ENABLED === 'true',
   context7Command: import.meta.env.VITE_CONTEXT7_MCP_COMMAND ?? '',
   context7Args: import.meta.env.VITE_CONTEXT7_MCP_ARGS ?? '',
@@ -56,8 +59,10 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>()((set) => ({
   setBrowserMcpConfig: (config) =>
     set((state) => ({
       browserMcpEnabled: config.enabled ?? state.browserMcpEnabled,
-      browserMcpCommand: config.command ?? state.browserMcpCommand,
-      browserMcpArgs: config.args ?? state.browserMcpArgs,
+      browserMcpCommand:
+        config.command ?? (config.enabled === true && !state.browserMcpCommand ? DEFAULT_BROWSER_MCP_COMMAND : state.browserMcpCommand),
+      browserMcpArgs:
+        config.args ?? (config.enabled === true && !state.browserMcpArgs ? DEFAULT_BROWSER_MCP_ARGS : state.browserMcpArgs),
     })),
   setContext7Config: (config) =>
     set((state) => ({
