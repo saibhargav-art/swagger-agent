@@ -241,6 +241,8 @@ export default function ConnectionsPage() {
           enabled: boolean;
           configured: boolean;
           connected: boolean;
+          browserSessionConnected?: boolean;
+          browserSessionError?: string;
           tools: string[];
           error?: string;
         }>;
@@ -260,11 +262,21 @@ export default function ConnectionsPage() {
         if (!browserDiagnostic.tools.some((tool) => /navigate|open|browser/i.test(tool))) {
           throw new Error(`Browser MCP connected, but no browser navigation tools were found. Tools: ${browserDiagnostic.tools.join(', ') || 'none'}`);
         }
+        if (browserDiagnostic.browserSessionConnected === false) {
+          throw new Error(
+            `Browser MCP server is running, but no browser tab is connected. ${
+              browserDiagnostic.browserSessionError
+                ?? 'Open the Browser MCP extension in Chrome and click Connect for the active tab.'
+            }`,
+          );
+        }
       }
 
       setAgentStatus('connected');
       const mcpSummary = [
-        browserMcpEnabled && browserDiagnostic ? `Browser MCP connected (${browserDiagnostic.tools.length} tools)` : null,
+        browserMcpEnabled && browserDiagnostic
+          ? `Browser MCP connected (${browserDiagnostic.tools.length} tools${browserDiagnostic.browserSessionConnected ? ', tab connected' : ''})`
+          : null,
         context7Enabled ? `Context7 ${payload.mcpServers?.context7?.configured || context7Command.trim() ? 'configured' : 'needs command'}` : null,
       ].filter(Boolean).join('. ');
       setAgentError(`Running. Server default: ${payload.defaultModelProvider}${

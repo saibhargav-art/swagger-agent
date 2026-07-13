@@ -9,6 +9,8 @@ export type McpServerDiagnostic = {
   enabled: boolean
   configured: boolean
   connected: boolean
+  browserSessionConnected?: boolean
+  browserSessionError?: string
   tools: string[]
   error?: string
 }
@@ -109,12 +111,18 @@ async function inspectServer({
   const client = createStdioClient(name, command, args)
   try {
     const tools = await client.listTools()
+    const toolNames = tools.map((tool) => tool.name)
+    const sessionCheck = name === 'browser-mcp'
+      ? await inspectBrowserSession(client, tools)
+      : {}
+
     return {
       name,
       enabled,
       configured: true,
       connected: client.connectionState === 'connected',
-      tools: tools.map((tool) => tool.name),
+      ...sessionCheck,
+      tools: toolNames,
     }
   } catch (err) {
     return {
@@ -128,6 +136,47 @@ async function inspectServer({
   } finally {
     await client.disconnect().catch(() => undefined)
   }
+}
+
+async function inspectBrowserSession(
+  client: McpClient,
+  tools: Awaited<ReturnType<McpClient['listTools']>>,
+): Promise<Pick<McpServerDiagnostic, 'browserSessionConnected' | 'browserSessionError'>> {
+  const snapshotTool = tools.find((tool) => tool.name === 'browser_snapshot')
+  if (!snapshotTool) return {}
+
+  try {
+    const result = await client.callTool(snapshotTool, {})
+    const isError = Boolean(result && typeof result === 'object' && !Array.isArray(result) && (result as { isError?: unknown }).isError)
+    if (isError) {
+      return {
+        browserSessionConnected: false,
+        browserSessionError: extractMcpText(result),
+      }
+    }
+
+    return { browserSessionConnected: true }
+  } catch (err) {
+    return {
+      browserSessionConnected: false,
+      browserSessionError: err instanceof Error ? err.message : String(err),
+    }
+  }
+}
+
+function extractMcpText(result: unknown): string {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return String(result ?? '')
+  const content = (result as { content?: unknown }).content
+  if (!Array.isArray(content)) return JSON.stringify(result)
+
+  return content
+    .map((item) => {
+      if (!item || typeof item !== 'object') return ''
+      const text = (item as { text?: unknown }).text
+      return typeof text === 'string' ? text : ''
+    })
+    .filter(Boolean)
+    .join(' ')
 }
 
 function createStdioClient(name: string, command: string, args: string[]): McpClient {
