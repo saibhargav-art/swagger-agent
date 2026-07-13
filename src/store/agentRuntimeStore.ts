@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 
 export type StrandsModelProvider = 'ollama' | 'openai' | 'bedrock';
 
@@ -42,33 +43,53 @@ const defaults = {
   context7Args: import.meta.env.VITE_CONTEXT7_MCP_ARGS ?? '',
 };
 
-export const useAgentRuntimeStore = create<AgentRuntimeState>()((set) => ({
-  ...defaults,
-  setAgentUrl: (agentUrl) => set({ agentUrl: agentUrl.trim() }),
-  setModelProvider: (modelProvider) => set({ modelProvider }),
-  setOllamaConfig: (config) =>
-    set((state) => ({
-      ollamaBaseUrl: config.baseUrl ?? state.ollamaBaseUrl,
-      ollamaModel: config.model ?? state.ollamaModel,
-    })),
-  setOpenAiConfig: (config) =>
-    set((state) => ({
-      openAiApiKey: config.apiKey ?? state.openAiApiKey,
-      openAiModel: config.model ?? state.openAiModel,
-    })),
-  setBrowserMcpConfig: (config) =>
-    set((state) => ({
-      browserMcpEnabled: config.enabled ?? state.browserMcpEnabled,
-      browserMcpCommand:
-        config.command ?? (config.enabled === true && !state.browserMcpCommand ? DEFAULT_BROWSER_MCP_COMMAND : state.browserMcpCommand),
-      browserMcpArgs:
-        config.args ?? (config.enabled === true && !state.browserMcpArgs ? DEFAULT_BROWSER_MCP_ARGS : state.browserMcpArgs),
-    })),
-  setContext7Config: (config) =>
-    set((state) => ({
-      context7Enabled: config.enabled ?? state.context7Enabled,
-      context7Command: config.command ?? state.context7Command,
-      context7Args: config.args ?? state.context7Args,
-    })),
-  reset: () => set(defaults),
-}));
+export const useAgentRuntimeStore = create<AgentRuntimeState>()(
+  persist(
+    (set) => ({
+      ...defaults,
+      setAgentUrl: (agentUrl) => set({ agentUrl: agentUrl.trim() }),
+      setModelProvider: (modelProvider) => set({ modelProvider }),
+      setOllamaConfig: (config) =>
+        set((state) => ({
+          ollamaBaseUrl: config.baseUrl ?? state.ollamaBaseUrl,
+          ollamaModel: config.model ?? state.ollamaModel,
+        })),
+      setOpenAiConfig: (config) =>
+        set((state) => ({
+          openAiApiKey: config.apiKey ?? state.openAiApiKey,
+          openAiModel: config.model ?? state.openAiModel,
+        })),
+      setBrowserMcpConfig: (config) =>
+        set((state) => ({
+          browserMcpEnabled: config.enabled ?? state.browserMcpEnabled,
+          browserMcpCommand:
+            config.command ?? (config.enabled === true && !state.browserMcpCommand ? DEFAULT_BROWSER_MCP_COMMAND : state.browserMcpCommand),
+          browserMcpArgs:
+            config.args ?? (config.enabled === true && !state.browserMcpArgs ? DEFAULT_BROWSER_MCP_ARGS : state.browserMcpArgs),
+        })),
+      setContext7Config: (config) =>
+        set((state) => ({
+          context7Enabled: config.enabled ?? state.context7Enabled,
+          context7Command: config.command ?? state.context7Command,
+          context7Args: config.args ?? state.context7Args,
+        })),
+      reset: () => set(defaults),
+    }),
+    {
+      name: 'swagger-agent-runtime',
+      partialize: (state) => ({
+        agentUrl: state.agentUrl,
+        modelProvider: state.modelProvider,
+        ollamaBaseUrl: state.ollamaBaseUrl,
+        ollamaModel: state.ollamaModel,
+        openAiModel: state.openAiModel,
+        browserMcpEnabled: state.browserMcpEnabled,
+        browserMcpCommand: state.browserMcpCommand,
+        browserMcpArgs: state.browserMcpArgs,
+        context7Enabled: state.context7Enabled,
+        context7Command: state.context7Command,
+        context7Args: state.context7Args,
+      }),
+    },
+  ),
+);

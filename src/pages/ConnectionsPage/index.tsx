@@ -118,6 +118,7 @@ export default function ConnectionsPage() {
   const [agentTesting, setAgentTesting] = useState(false);
   const [agentStatus, setAgentStatus] = useState<'connected' | 'error' | 'not-connected'>('not-connected');
   const [agentError, setAgentError] = useState<string | null>(null);
+  const customerTabUrl = (pendingBaseUrl.trim() || baseUrl.trim() || loginUrlInput.trim()).replace(/\/+$/g, '');
 
   const handleConnectWebsite = async () => {
     const validation = validateWebsiteUrl(pendingBaseUrl);
@@ -450,6 +451,24 @@ export default function ConnectionsPage() {
                 </div>
                 {browserMcpEnabled ? (
                   <div className="mt-3 grid gap-3">
+                    <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      Connect the Browser MCP extension in the customer app tab, not this chat tab. BrowserMCP controls the tab where you click Connect.
+                    </div>
+                    <div className="flex flex-col gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-xs text-slate-500">
+                        Open the customer app in a separate tab, then click the Browser MCP extension and Connect there.
+                      </p>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={!customerTabUrl}
+                        onClick={() => window.open(customerTabUrl, '_blank', 'noopener,noreferrer')}
+                      >
+                        <ExternalLink size={13} />
+                        Open customer tab
+                      </Button>
+                    </div>
                     <Field label="Browser MCP command">
                       <Input
                         value={browserMcpCommand}
@@ -464,7 +483,7 @@ export default function ConnectionsPage() {
                         onChange={(event) => setBrowserMcpConfig({ args: event.target.value })}
                       />
                       <p className="text-xs font-normal text-slate-500">
-                        After testing, open the Browser MCP extension in Chrome and click Connect for the active tab.
+                        Standard setup: command <span className="font-mono">npx</span>, args <span className="font-mono">@browsermcp/mcp@latest</span>.
                       </p>
                     </Field>
                   </div>

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
 
 interface WebMCPState {
   baseUrl: string;
@@ -20,43 +21,11 @@ interface WebMCPState {
   disconnect: () => void;
 }
 
-export const useWebMCPStore = create<WebMCPState>()((set) => ({
-  baseUrl: import.meta.env.VITE_WEBMCP_BASE_URL ?? '',
-  loginUrl: import.meta.env.VITE_WEBMCP_LOGIN_URL ?? '',
-  authMode: 'bearer',
-  bearerToken: '',
-  status: 'not-connected',
-  error: null,
-  toolCount: 0,
-  appName: null,
-  appDescription: null,
-  setBaseUrl: (baseUrl: string) =>
-    set({
-      baseUrl: baseUrl.trim(),
-      status: 'not-connected',
-      error: null,
-      toolCount: 0,
-      appName: null,
-      appDescription: null,
-    }),
-  setLoginUrl: (loginUrl: string) => set({ loginUrl: loginUrl.trim() }),
-  setAuthConfig: (config) =>
-    set({
-      authMode: config.authMode,
-      bearerToken: config.bearerToken?.trim() ?? '',
-    }),
-  setStatus: (status) => set({ status }),
-  setError: (error) => set({ error }),
-  setToolCount: (toolCount) => set({ toolCount }),
-  setAppInfo: (info) =>
-    set({
-      appName: info.name?.trim() || null,
-      appDescription: info.description?.trim() || null,
-    }),
-  disconnect: () =>
-    set({
-      baseUrl: '',
-      loginUrl: '',
+export const useWebMCPStore = create<WebMCPState>()(
+  persist(
+    (set) => ({
+      baseUrl: import.meta.env.VITE_WEBMCP_BASE_URL ?? '',
+      loginUrl: import.meta.env.VITE_WEBMCP_LOGIN_URL ?? '',
       authMode: 'bearer',
       bearerToken: '',
       status: 'not-connected',
@@ -64,5 +33,49 @@ export const useWebMCPStore = create<WebMCPState>()((set) => ({
       toolCount: 0,
       appName: null,
       appDescription: null,
+      setBaseUrl: (baseUrl: string) =>
+        set({
+          baseUrl: baseUrl.trim(),
+          status: 'not-connected',
+          error: null,
+          toolCount: 0,
+          appName: null,
+          appDescription: null,
+        }),
+      setLoginUrl: (loginUrl: string) => set({ loginUrl: loginUrl.trim() }),
+      setAuthConfig: (config) =>
+        set({
+          authMode: config.authMode,
+          bearerToken: config.bearerToken?.trim() ?? '',
+        }),
+      setStatus: (status) => set({ status }),
+      setError: (error) => set({ error }),
+      setToolCount: (toolCount) => set({ toolCount }),
+      setAppInfo: (info) =>
+        set({
+          appName: info.name?.trim() || null,
+          appDescription: info.description?.trim() || null,
+        }),
+      disconnect: () =>
+        set({
+          baseUrl: '',
+          loginUrl: '',
+          authMode: 'bearer',
+          bearerToken: '',
+          status: 'not-connected',
+          error: null,
+          toolCount: 0,
+          appName: null,
+          appDescription: null,
+        }),
     }),
-}));
+    {
+      name: 'swagger-agent-webmcp',
+      partialize: (state) => ({
+        baseUrl: state.baseUrl,
+        loginUrl: state.loginUrl,
+        authMode: state.authMode,
+      }),
+    },
+  ),
+);
