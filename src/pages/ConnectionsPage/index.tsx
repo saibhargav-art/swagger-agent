@@ -70,7 +70,7 @@ function validateAccessToken(token: string): string | null {
 export default function ConnectionsPage() {
   const { tools, isLoading, error, reload } = useTools();
   const { setTools } = useToolStore();
-  const { baseUrl, status, error: mcpError, toolCount, setBaseUrl, setStatus, setError, setToolCount, setAppInfo, disconnect } =
+  const { baseUrl, loginUrl, status, error: mcpError, toolCount, setBaseUrl, setLoginUrl: setStoredLoginUrl, setStatus, setError, setToolCount, setAppInfo, disconnect } =
     useWebMCPStore();
   const { setAuthConfig } = useWebMCPStore();
   const {
@@ -97,7 +97,7 @@ export default function ConnectionsPage() {
 
   const [selectedTool, setSelectedTool] = useState<Tool | null>(null);
   const [pendingBaseUrl, setPendingBaseUrl] = useState(baseUrl);
-  const [loginUrl, setLoginUrl] = useState('');
+  const [loginUrlInput, setLoginUrlInput] = useState(loginUrl);
   const [authMode, setAuthMode] = useState<'bearer' | 'browser-session'>('bearer');
   const [tokenInput, setTokenInput] = useState(accessToken ?? '');
   const [mcpTesting, setMCPTesting] = useState(false);
@@ -142,6 +142,7 @@ export default function ConnectionsPage() {
     }
     webMCPService.setBaseUrl(normalizedUrl);
     setBaseUrl(normalizedUrl);
+    setStoredLoginUrl(loginUrlInput);
     setStatus('not-connected');
     setError(null);
     setToolCount(0);
@@ -230,7 +231,7 @@ export default function ConnectionsPage() {
     setTools([]);
     setSelectedTool(null);
     setPendingBaseUrl('');
-    setLoginUrl('');
+    setLoginUrlInput('');
     setTokenInput('');
     setAuthMode('bearer');
   };
@@ -243,6 +244,7 @@ export default function ConnectionsPage() {
   };
 
   useEffect(() => setPendingBaseUrl(baseUrl), [baseUrl]);
+  useEffect(() => setLoginUrlInput(loginUrl), [loginUrl]);
   useEffect(() => {
     setTokenInput(accessToken ?? '');
   }, [accessToken]);
@@ -355,6 +357,19 @@ export default function ConnectionsPage() {
                     <p className="mt-1 text-xs text-slate-500">
                       Optional. Enable only after installing a Browser MCP server. It lets the local agent open pages, click, type, and inspect visible UI when APIs are not enough.
                     </p>
+                    <button
+                      type="button"
+                      className="mt-2 text-xs font-medium text-indigo-600 hover:text-indigo-700"
+                      onClick={() =>
+                        setBrowserMcpConfig({
+                          enabled: true,
+                          command: 'npx',
+                          args: '-y @browsermcp/mcp@latest',
+                        })
+                      }
+                    >
+                      Use BrowserMCP preset
+                    </button>
                   </div>
                   <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700">
                     <input
@@ -440,16 +455,16 @@ export default function ConnectionsPage() {
                     <Input
                       type="url"
                       placeholder="https://customer-app.com/login"
-                      value={loginUrl}
-                      onChange={(event) => setLoginUrl(event.target.value)}
+                      value={loginUrlInput}
+                      onChange={(event) => setLoginUrlInput(event.target.value)}
                     />
                     <Button
                       type="button"
                       variant="outline"
                       size="icon"
                       title="Open login page"
-                      disabled={!loginUrl.trim()}
-                      onClick={() => window.open(loginUrl.trim(), '_blank', 'noopener,noreferrer')}
+                      disabled={!loginUrlInput.trim()}
+                      onClick={() => window.open(loginUrlInput.trim(), '_blank', 'noopener,noreferrer')}
                     >
                       <ExternalLink size={15} />
                     </Button>

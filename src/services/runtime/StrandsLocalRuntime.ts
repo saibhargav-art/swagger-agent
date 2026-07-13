@@ -127,6 +127,8 @@ function buildRequestPayload(
     context7Command: runtime.context7Enabled ? runtime.context7Command || undefined : undefined,
     context7Args: runtime.context7Enabled ? parseArgs(runtime.context7Args) : [],
     webmcpBaseUrl: connection.baseUrl,
+    webmcpLoginUrl: connection.loginUrl || undefined,
+    browserStartUrl: connection.loginUrl || connection.baseUrl || undefined,
     webmcpBearerToken: connection.authMode === 'bearer' ? connection.bearerToken : undefined,
     allowWebMcpWrites: import.meta.env.VITE_ALLOW_WEBMCP_WRITES === 'true',
   }

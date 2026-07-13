@@ -27,6 +27,8 @@ export type RunAgentInput = {
   context7Command?: string
   context7Args?: string[]
   webmcpBaseUrl?: string
+  webmcpLoginUrl?: string
+  browserStartUrl?: string
   webmcpBearerToken?: string
   webmcpAuthHeader?: string
   webmcpAuthValue?: string
@@ -106,7 +108,7 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
   const agent = await getOrCreateAgent(effectiveConfig, conversationId, input)
   trimAgentHistory(agent)
   const beforeMessageCount = agent.messages.length
-  const result = await agent.invoke(input.message, {
+  const result = await agent.invoke(withRuntimeContext(input.message, effectiveConfig, input), {
     limits: {
       turns: MAX_AGENT_TURNS,
       totalTokens: MAX_AGENT_TOKENS,
@@ -386,6 +388,8 @@ async function getOrCreateAgent(
     config.ollamaBaseUrl,
     config.ollamaModel,
     input.webmcpBaseUrl ?? config.webmcpBaseUrl ?? '',
+    input.webmcpLoginUrl ?? '',
+    input.browserStartUrl ?? '',
     tokenFingerprint(input.webmcpBearerToken ?? config.webmcpBearerToken ?? ''),
     input.webmcpAuthHeader ?? config.webmcpAuthHeader ?? '',
     tokenFingerprint(input.webmcpAuthValue ?? config.webmcpAuthValue ?? ''),
@@ -528,13 +532,29 @@ function trimAgentHistory(agent: Agent): void {
   if (overflow > 0) agent.messages.splice(0, overflow)
 }
 
+function withRuntimeContext(message: string, config: LocalAgentConfig, input: RunAgentInput): string {
+  const browserEnabled = config.browserMcpEnabled && Boolean(config.browserMcpCommand)
+  const context = [
+    input.webmcpBaseUrl ? `Connected website base URL: ${input.webmcpBaseUrl}.` : '',
+    input.webmcpLoginUrl ? `Customer login URL: ${input.webmcpLoginUrl}.` : '',
+    input.browserStartUrl ? `Browser start URL: ${input.browserStartUrl}.` : '',
+    browserEnabled
+      ? 'Browser MCP is available for visible browser actions.'
+      : 'Browser MCP is not available in this run; use WebMCP API tools or explain that browser automation is not configured.',
+  ].filter(Boolean).join(' ')
+
+  return context ? `${message}\n\nRuntime context:\n${context}` : message
+}
+
 function systemPrompt(): string {
   return [
     'You are a local desktop agent for connected customer applications.',
     'The user speaks naturally and may use imperfect wording. Infer intent from meaning, not exact keyword matching.',
     'First decide whether the request is supported by available tools. If not supported, say what connected app actions are available.',
     'Use WebMCP API tools for customer app data/actions when available.',
-    'Use Browser MCP only when browser navigation, clicks, visible page state, or OTP/login interaction is required.',
+    'Use Browser MCP when the user asks to open the site, navigate pages, click/type in the UI, inspect visible page state, or handle login/OTP/browser-only interaction.',
+    'If Browser MCP is available and the user asks to use the website UI, open the connected website/login URL first and continue from the visible page.',
+    'Prefer WebMCP API tools over browser clicking for direct data actions unless the user specifically asks to use the website UI or no API tool is available.',
     'For read-only questions, call list/search/get tools as needed, inspect returned records, filter/group/count them, and answer in plain language.',
     'For questions like duplicates, comparisons, counts, or conditions, retrieve a broad record list first, then analyze returned rows yourself.',
     'Never pass the whole user sentence as a search query unless the user clearly gave that exact text as the search value.',

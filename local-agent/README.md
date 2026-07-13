@@ -98,6 +98,16 @@ $env:BROWSER_MCP_ARGS='["arg1","arg2"]'
 
 When Browser MCP is enabled, Strands can use browser tools for page navigation, visible state, login/OTP handoff, and other UI-only actions. WebMCP tools remain the preferred path for direct customer app API actions.
 
+For the BrowserMCP project, use the preset in the Connections page or set:
+
+```powershell
+$env:BROWSER_MCP_ENABLED="true"
+$env:BROWSER_MCP_COMMAND="npx"
+$env:BROWSER_MCP_ARGS='["-y","@browsermcp/mcp@latest"]'
+```
+
+Then connect the BrowserMCP browser extension/session as required by that server. Ask browser-specific requests such as "open the connected website orders page" or "use the website UI to create an order".
+
 ## Why This Shape
 
 The app should not keep adding prompt-specific rules in `ChatService`.
