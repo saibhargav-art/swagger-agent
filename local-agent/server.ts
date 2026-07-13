@@ -2,6 +2,7 @@ import http from 'node:http'
 
 import { readConfig } from './config.js'
 import { resolvePendingWrite, runAgent, shutdownAgents, type RunAgentInput } from './agent-runtime.js'
+import { inspectMcpServers } from './tools/mcp-clients.js'
 
 const config = readConfig([])
 const port = Number(process.env.STRANDS_AGENT_PORT ?? 8787)
@@ -133,6 +134,26 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, { ok: true, modelProvider: body.modelProvider ?? config.modelProvider })
     } catch (err) {
       sendJson(res, 500, { ok: false, error: err instanceof Error ? err.message : 'Model health check failed' })
+    }
+    return
+  }
+
+  if (req.method === 'POST' && req.url === '/mcp-health') {
+    try {
+      const body = await readJson<RunAgentInput>(req)
+      const diagnostics = await inspectMcpServers({
+        ...config,
+        browserMcpEnabled: body.browserMcpEnabled ?? config.browserMcpEnabled,
+        browserMcpCommand: body.browserMcpCommand ?? config.browserMcpCommand,
+        browserMcpArgs: body.browserMcpArgs ?? config.browserMcpArgs,
+        context7Enabled: body.context7Enabled ?? config.context7Enabled,
+        context7Command: body.context7Command ?? config.context7Command,
+        context7Args: body.context7Args ?? config.context7Args,
+      })
+
+      sendJson(res, 200, { ok: true, diagnostics })
+    } catch (err) {
+      sendJson(res, 500, { ok: false, error: err instanceof Error ? err.message : 'MCP health check failed' })
     }
     return
   }

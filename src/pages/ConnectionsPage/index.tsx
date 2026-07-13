@@ -67,6 +67,20 @@ function validateAccessToken(token: string): string | null {
   return null;
 }
 
+function parseArgs(value: string): string[] {
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (Array.isArray(parsed)) return parsed.map(String);
+  } catch {
+    // Support simple CLI-style args in the form field.
+  }
+
+  return trimmed.match(/(?:[^\s"]+|"[^"]*")+/g)?.map((part) => part.replace(/^"|"$/g, '')) ?? [];
+}
+
 export default function ConnectionsPage() {
   const { tools, isLoading, error, reload } = useTools();
   const { setTools } = useToolStore();
@@ -207,9 +221,50 @@ export default function ConnectionsPage() {
         throw new Error(modelPayload.error ?? 'Selected model cannot be used by the local agent.');
       }
 
+      const mcpResponse = await fetch(`${agentUrl.replace(/\/$/, '')}/mcp-health`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          browserMcpEnabled,
+          browserMcpCommand: browserMcpCommand || undefined,
+          browserMcpArgs: parseArgs(browserMcpArgs),
+          context7Enabled,
+          context7Command: context7Command || undefined,
+          context7Args: parseArgs(context7Args),
+        }),
+      });
+      const mcpPayload = await mcpResponse.json() as {
+        ok?: boolean;
+        error?: string;
+        diagnostics?: Array<{
+          name: string;
+          enabled: boolean;
+          configured: boolean;
+          connected: boolean;
+          tools: string[];
+          error?: string;
+        }>;
+      };
+      if (!mcpResponse.ok || !mcpPayload.ok) {
+        throw new Error(mcpPayload.error ?? 'MCP health check failed.');
+      }
+
+      const browserDiagnostic = mcpPayload.diagnostics?.find((item) => item.name === 'browser-mcp');
+      if (browserMcpEnabled) {
+        if (!browserDiagnostic?.configured) {
+          throw new Error('Browser MCP is enabled but no command is configured.');
+        }
+        if (!browserDiagnostic.connected) {
+          throw new Error(`Browser MCP did not connect. ${browserDiagnostic.error ?? 'Install/connect the BrowserMCP extension and restart the local agent.'}`);
+        }
+        if (!browserDiagnostic.tools.some((tool) => /navigate|open|browser/i.test(tool))) {
+          throw new Error(`Browser MCP connected, but no browser navigation tools were found. Tools: ${browserDiagnostic.tools.join(', ') || 'none'}`);
+        }
+      }
+
       setAgentStatus('connected');
       const mcpSummary = [
-        browserMcpEnabled ? `Browser MCP ${payload.mcpServers?.browser?.configured || browserMcpCommand.trim() ? 'configured' : 'needs command'}` : null,
+        browserMcpEnabled && browserDiagnostic ? `Browser MCP connected (${browserDiagnostic.tools.length} tools)` : null,
         context7Enabled ? `Context7 ${payload.mcpServers?.context7?.configured || context7Command.trim() ? 'configured' : 'needs command'}` : null,
       ].filter(Boolean).join('. ');
       setAgentError(`Running. Server default: ${payload.defaultModelProvider}${

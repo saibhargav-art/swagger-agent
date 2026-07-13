@@ -1,7 +1,7 @@
 import { Agent, type Message, type ToolList } from '@strands-agents/sdk'
 import { OpenAIModel } from '@strands-agents/sdk/models/openai'
 
-import { createMcpClients, disconnectMcpClients } from './tools/mcp-clients.js'
+import { createMcpClients, disconnectMcpClients, navigateWithBrowserMcp } from './tools/mcp-clients.js'
 import {
   approvePendingWebMcpWrite,
   clearPendingWebMcpWrite,
@@ -72,6 +72,26 @@ const MAX_HISTORY_MESSAGES = Number(process.env.STRANDS_MAX_HISTORY_MESSAGES ?? 
 export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): Promise<RunAgentResult> {
   const conversationId = input.conversationId?.trim() || 'default'
   const effectiveConfig = mergeRuntimeConfig(config, input)
+
+  if (browserOnlyRequest(input.message)) {
+    const url = resolveBrowserTargetUrl(input)
+    if (url && effectiveConfig.browserMcpEnabled && effectiveConfig.browserMcpCommand) {
+      const result = await navigateWithBrowserMcp(effectiveConfig, url)
+      return {
+        content: `Opened ${url} in the connected browser session.`,
+        stopReason: 'endTurn',
+        trace: [
+          {
+            type: 'tool',
+            name: result.toolName,
+            input: { url },
+            result: result.result,
+            ok: isSuccessfulToolResult(result.result),
+          },
+        ],
+      }
+    }
+  }
 
   if (hasPendingWebMcpWrite(conversationId)) {
     if (isCancel(input.message)) {
@@ -559,6 +579,23 @@ function browserOnlyRequest(message: string): boolean {
   const targetsPage = /\b(browser|website|site|page|screen|ui|orders page|dashboard|login)\b/.test(text)
   const asksForDataAction = /\b(create|delete|update|list|get|search|find|check|status|duplicate)\b/.test(text)
   return asksForBrowser && targetsPage && !asksForDataAction
+}
+
+function resolveBrowserTargetUrl(input: RunAgentInput): string | null {
+  const text = input.message.toLowerCase()
+  const baseUrl = input.webmcpBaseUrl?.replace(/\/+$/g, '')
+  const loginUrl = input.webmcpLoginUrl?.trim()
+
+  if (/\blogin|sign in|signin\b/.test(text) && loginUrl) return loginUrl
+  if (!baseUrl) return input.browserStartUrl ?? loginUrl ?? null
+
+  const path =
+    /\borders?\b/.test(text) ? '/orders'
+      : /\bdashboard\b/.test(text) ? '/dashboard'
+        : /\badmin\b/.test(text) ? '/admin'
+          : ''
+
+  return `${baseUrl}${path}`
 }
 
 function systemPrompt(): string {
