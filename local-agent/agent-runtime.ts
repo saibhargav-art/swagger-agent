@@ -68,6 +68,7 @@ const clientCleanup = new Map<string, ReturnType<typeof createMcpClients>>()
 const MAX_AGENT_TURNS = Number(process.env.STRANDS_MAX_TURNS ?? 4)
 const MAX_AGENT_TOKENS = Number(process.env.STRANDS_MAX_TOKENS ?? 6000)
 const MAX_HISTORY_MESSAGES = Number(process.env.STRANDS_MAX_HISTORY_MESSAGES ?? 6)
+const AGENT_TIMEOUT_MS = Number(process.env.STRANDS_AGENT_TIMEOUT_MS ?? 90000)
 
 export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): Promise<RunAgentResult> {
   const conversationId = input.conversationId?.trim() || 'default'
@@ -108,12 +109,15 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
   const agent = await getOrCreateAgent(effectiveConfig, conversationId, input)
   trimAgentHistory(agent)
   const beforeMessageCount = agent.messages.length
-  const result = await agent.invoke(withRuntimeContext(input.message, effectiveConfig, input), {
-    limits: {
-      turns: MAX_AGENT_TURNS,
-      totalTokens: MAX_AGENT_TOKENS,
-    },
-  })
+  const result = await withTimeout(
+    agent.invoke(withRuntimeContext(input.message, effectiveConfig, input), {
+      limits: {
+        turns: browserOnlyRequest(input.message) ? 2 : MAX_AGENT_TURNS,
+        totalTokens: MAX_AGENT_TOKENS,
+      },
+    }),
+    AGENT_TIMEOUT_MS,
+  )
   const content = result.toString().trim()
   const trace = extractTrace(agent.messages.slice(beforeMessageCount))
   const pendingWrite = getPendingWebMcpWrite(conversationId)
@@ -534,6 +538,7 @@ function trimAgentHistory(agent: Agent): void {
 
 function withRuntimeContext(message: string, config: LocalAgentConfig, input: RunAgentInput): string {
   const browserEnabled = config.browserMcpEnabled && Boolean(config.browserMcpCommand)
+  const isBrowserOnly = browserOnlyRequest(message)
   const context = [
     input.webmcpBaseUrl ? `Connected website base URL: ${input.webmcpBaseUrl}.` : '',
     input.webmcpLoginUrl ? `Customer login URL: ${input.webmcpLoginUrl}.` : '',
@@ -541,9 +546,37 @@ function withRuntimeContext(message: string, config: LocalAgentConfig, input: Ru
     browserEnabled
       ? 'Browser MCP is available for visible browser actions.'
       : 'Browser MCP is not available in this run; use WebMCP API tools or explain that browser automation is not configured.',
+    isBrowserOnly
+      ? 'This is a browser-only navigation or page-inspection request. Use Browser MCP only, do not call WebMCP data/list/search tools, and stop after reporting the page action result.'
+      : '',
   ].filter(Boolean).join(' ')
 
   return context ? `${message}\n\nRuntime context:\n${context}` : message
+}
+
+function browserOnlyRequest(message: string): boolean {
+  const text = message.toLowerCase()
+  const asksForBrowser = /\b(open|navigate|go to|launch|inspect|view|show)\b/.test(text)
+  const targetsPage = /\b(browser|website|site|page|screen|ui|orders page|dashboard|login)\b/.test(text)
+  const asksForDataAction = /\b(create|delete|update|list|get|search|find|check|status|duplicate)\b/.test(text)
+  return asksForBrowser && targetsPage && !asksForDataAction
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`Local agent timed out after ${Math.round(timeoutMs / 1000)} seconds. Try a narrower request or a faster tool-capable model.`)),
+          timeoutMs,
+        )
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 function systemPrompt(): string {
