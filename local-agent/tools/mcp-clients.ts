@@ -6,11 +6,11 @@ import type { LocalAgentConfig } from '../config.js'
 export function createMcpClients(config: LocalAgentConfig): McpClient[] {
   const clients: McpClient[] = []
 
-  if (config.browserMcpCommand) {
+  if (config.browserMcpEnabled && config.browserMcpCommand) {
     clients.push(createStdioClient('browser-mcp', config.browserMcpCommand, config.browserMcpArgs))
   }
 
-  if (config.context7Enabled) {
+  if (config.context7Enabled && config.context7Command) {
     clients.push(createStdioClient('context7', config.context7Command, config.context7Args))
   }
 

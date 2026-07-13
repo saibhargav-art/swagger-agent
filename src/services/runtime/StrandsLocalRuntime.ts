@@ -5,6 +5,13 @@ import { useAgentRuntimeStore } from '@/store/agentRuntimeStore'
 type StrandsResponse = {
   content?: string
   error?: string
+  trace?: Array<{
+    type: 'tool'
+    name: string
+    input?: unknown
+    result?: unknown
+    ok: boolean
+  }>
   confirmationRequired?: {
     runId: string
     title: string
@@ -38,6 +45,9 @@ export class StrandsLocalRuntime implements AgentRuntime {
     }
 
     yield { type: 'text', text: payload.content ?? 'No response from local Strands agent.' }
+    if (payload.trace?.length) {
+      yield { type: 'trace', steps: payload.trace }
+    }
     if (payload.confirmationRequired) {
       yield {
         type: 'confirmation-required',
@@ -110,8 +120,28 @@ function buildRequestPayload(
           openAiModel: runtime.openAiModel,
         }
       : {}),
+    browserMcpEnabled: runtime.browserMcpEnabled,
+    browserMcpCommand: runtime.browserMcpEnabled ? runtime.browserMcpCommand || undefined : undefined,
+    browserMcpArgs: runtime.browserMcpEnabled ? parseArgs(runtime.browserMcpArgs) : [],
+    context7Enabled: runtime.context7Enabled,
+    context7Command: runtime.context7Enabled ? runtime.context7Command || undefined : undefined,
+    context7Args: runtime.context7Enabled ? parseArgs(runtime.context7Args) : [],
     webmcpBaseUrl: connection.baseUrl,
     webmcpBearerToken: connection.authMode === 'bearer' ? connection.bearerToken : undefined,
     allowWebMcpWrites: import.meta.env.VITE_ALLOW_WEBMCP_WRITES === 'true',
   }
+}
+
+function parseArgs(value: string): string[] {
+  const trimmed = value.trim()
+  if (!trimmed) return []
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown
+    if (Array.isArray(parsed)) return parsed.map(String)
+  } catch {
+    // Keep the UI friendly: support either JSON arrays or simple command-line text.
+  }
+
+  return trimmed.match(/(?:[^\s"]+|"[^"]*")+/g)?.map((part) => part.replace(/^"|"$/g, '')) ?? []
 }

@@ -80,10 +80,18 @@ export default function ConnectionsPage() {
     ollamaModel,
     openAiApiKey,
     openAiModel,
+    browserMcpEnabled,
+    browserMcpCommand,
+    browserMcpArgs,
+    context7Enabled,
+    context7Command,
+    context7Args,
     setAgentUrl,
     setModelProvider,
     setOllamaConfig,
     setOpenAiConfig,
+    setBrowserMcpConfig,
+    setContext7Config,
   } = useAgentRuntimeStore();
   const { accessToken, login, logout } = useAuth();
 
@@ -166,6 +174,10 @@ export default function ConnectionsPage() {
         defaultModelProvider?: string;
         ollamaBaseUrl?: string;
         ollamaModel?: string;
+        mcpServers?: {
+          browser?: { enabled?: boolean; configured?: boolean };
+          context7?: { enabled?: boolean; configured?: boolean };
+        };
       };
 
       if (!response.ok || !payload.ok) {
@@ -195,9 +207,13 @@ export default function ConnectionsPage() {
       }
 
       setAgentStatus('connected');
+      const mcpSummary = [
+        browserMcpEnabled ? `Browser MCP ${payload.mcpServers?.browser?.configured || browserMcpCommand.trim() ? 'configured' : 'needs command'}` : null,
+        context7Enabled ? `Context7 ${payload.mcpServers?.context7?.configured || context7Command.trim() ? 'configured' : 'needs command'}` : null,
+      ].filter(Boolean).join('. ');
       setAgentError(`Running. Server default: ${payload.defaultModelProvider}${
         payload.defaultModelProvider === 'ollama' ? ` (${payload.ollamaModel} at ${payload.ollamaBaseUrl})` : ''
-      }. UI selected: ${modelProvider}.`);
+      }. UI selected: ${modelProvider}.${mcpSummary ? ` ${mcpSummary}.` : ''}`);
     } catch (err) {
       setAgentStatus('error');
       setAgentError(err instanceof Error ? err.message : 'Could not reach local Strands agent.');
@@ -331,6 +347,80 @@ export default function ConnectionsPage() {
                   Bedrock uses AWS credentials from the local agent process environment.
                 </div>
               ) : null}
+
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-semibold text-slate-800">Browser MCP</div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Optional. Enable only after installing a Browser MCP server. It lets the local agent open pages, click, type, and inspect visible UI when APIs are not enough.
+                    </p>
+                  </div>
+                  <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={browserMcpEnabled}
+                      onChange={(event) => setBrowserMcpConfig({ enabled: event.target.checked })}
+                    />
+                    Enable
+                  </label>
+                </div>
+                {browserMcpEnabled ? (
+                  <div className="mt-3 grid gap-3">
+                    <Field label="Browser MCP command">
+                      <Input
+                        value={browserMcpCommand}
+                        placeholder="Command from your Browser MCP server docs"
+                        onChange={(event) => setBrowserMcpConfig({ command: event.target.value })}
+                      />
+                    </Field>
+                    <Field label="Browser MCP args">
+                      <Input
+                        value={browserMcpArgs}
+                        placeholder="Optional args from the same docs"
+                        onChange={(event) => setBrowserMcpConfig({ args: event.target.value })}
+                      />
+                    </Field>
+                  </div>
+                ) : null}
+              </div>
+
+              <div className="rounded-md border border-slate-200 bg-slate-50 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-xs font-semibold text-slate-800">Context7 MCP</div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Optional documentation lookup for implementation/debug tasks. Keep disabled for normal customer app actions.
+                    </p>
+                  </div>
+                  <label className="inline-flex items-center gap-2 text-xs font-medium text-slate-700">
+                    <input
+                      type="checkbox"
+                      checked={context7Enabled}
+                      onChange={(event) => setContext7Config({ enabled: event.target.checked })}
+                    />
+                    Enable
+                  </label>
+                </div>
+                {context7Enabled ? (
+                  <div className="mt-3 grid gap-3">
+                    <Field label="Context7 command">
+                      <Input
+                        value={context7Command}
+                        placeholder="Command from your Context7 MCP setup"
+                        onChange={(event) => setContext7Config({ command: event.target.value })}
+                      />
+                    </Field>
+                    <Field label="Context7 args">
+                      <Input
+                        value={context7Args}
+                        placeholder="Optional args from the same setup"
+                        onChange={(event) => setContext7Config({ args: event.target.value })}
+                      />
+                    </Field>
+                  </div>
+                ) : null}
+              </div>
 
               <ConnectionFooter
                 status={agentStatus}

@@ -9,6 +9,9 @@
     "preview": "vite preview",
     "agent:poc": "tsx --tsconfig local-agent/tsconfig.json local-agent/strands-agent.ts",
     "agent:server": "tsx --tsconfig local-agent/tsconfig.json local-agent/server.ts",
+    "agent:restart": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restart-agent.ps1",
+    "agent:restart:bg": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restart-agent.ps1 -Background",
+    "agent:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restart-agent.ps1 -StopOnly",
     "agent:check": "tsc -p local-agent/tsconfig.json --noEmit"
   },
   "dependencies": {

@@ -20,6 +20,12 @@ export type RunAgentInput = {
   openAiModel?: string
   ollamaBaseUrl?: string
   ollamaModel?: string
+  browserMcpEnabled?: boolean
+  browserMcpCommand?: string
+  browserMcpArgs?: string[]
+  context7Enabled?: boolean
+  context7Command?: string
+  context7Args?: string[]
   webmcpBaseUrl?: string
   webmcpBearerToken?: string
   webmcpAuthHeader?: string
@@ -38,12 +44,21 @@ export type ConfirmPendingWriteInput = {
 export type RunAgentResult = {
   content: string
   stopReason?: string
+  trace?: AgentTraceStep[]
   confirmationRequired?: {
     runId: string
     toolName: string
     title: string
     details: Record<string, unknown>
   }
+}
+
+export type AgentTraceStep = {
+  type: 'tool'
+  name: string
+  input?: unknown
+  result?: unknown
+  ok: boolean
 }
 
 const agents = new Map<string, Agent>()
@@ -66,16 +81,31 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
     }
 
     if (isApproval(input.message)) {
-      const result = await approvePendingWebMcpWrite(conversationId)
+      const pending = getPendingWebMcpWrite(conversationId)
+      const result = await approvePendingWebMcpWrite(conversationId, {
+        bearerToken: input.webmcpBearerToken,
+        authHeader: input.webmcpAuthHeader,
+        authValue: input.webmcpAuthValue,
+      })
       return {
         content: summarizeApprovedWrite(result),
         stopReason: 'endTurn',
+        trace: [
+          {
+            type: 'tool',
+            name: pending?.toolName ?? 'confirmed_action',
+            input: pending?.input,
+            result,
+            ok: isSuccessfulToolResult(result),
+          },
+        ],
       }
     }
   }
 
   const agent = await getOrCreateAgent(effectiveConfig, conversationId, input)
   trimAgentHistory(agent)
+  const beforeMessageCount = agent.messages.length
   const result = await agent.invoke(input.message, {
     limits: {
       turns: MAX_AGENT_TURNS,
@@ -83,11 +113,13 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
     },
   })
   const content = result.toString().trim()
+  const trace = extractTrace(agent.messages.slice(beforeMessageCount))
   const pendingWrite = getPendingWebMcpWrite(conversationId)
   if (pendingWrite) {
     return {
       content: confirmationPrompt(pendingWrite.title, pendingWrite.input),
       stopReason: result.stopReason,
+      trace,
       confirmationRequired: {
         runId: conversationId,
         toolName: pendingWrite.toolName,
@@ -103,6 +135,7 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
       return {
         content: fallback,
         stopReason: result.stopReason,
+        trace,
       }
     }
 
@@ -110,12 +143,14 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
       content:
         'The local model kept calling tools and did not produce a final answer. Try a stronger Ollama tool model, or narrow the request.',
       stopReason: result.stopReason,
+      trace,
     }
   }
 
   return {
     content: content || 'I could not produce a response.',
     stopReason: result.stopReason,
+    trace,
   }
 }
 
@@ -130,6 +165,7 @@ export async function resolvePendingWrite(
     return {
       content: 'There is no pending action to confirm.',
       stopReason: 'endTurn',
+      trace: [],
     }
   }
 
@@ -138,9 +174,15 @@ export async function resolvePendingWrite(
     return {
       content: 'Cancelled the pending action.',
       stopReason: 'endTurn',
+      trace: [],
     }
   }
 
+  const pendingTrace = {
+    type: 'tool' as const,
+    name: pending.toolName,
+    input: pending.input,
+  }
   const result = await approvePendingWebMcpWrite(sessionId, {
     bearerToken: input.webmcpBearerToken,
     authHeader: input.webmcpAuthHeader,
@@ -149,6 +191,13 @@ export async function resolvePendingWrite(
   return {
     content: summarizeApprovedWrite(result),
     stopReason: 'endTurn',
+    trace: [
+      {
+        ...pendingTrace,
+        result,
+        ok: isSuccessfulToolResult(result),
+      },
+    ],
   }
 }
 
@@ -200,6 +249,42 @@ function extractToolResultValues(block: unknown): unknown[] {
     }
     return []
   })
+}
+
+function extractTrace(messages: Message[]): AgentTraceStep[] {
+  const toolUses = new Map<string, { name: string; input?: unknown }>()
+  const trace: AgentTraceStep[] = []
+
+  for (const message of messages) {
+    for (const block of message.content) {
+      if (block.type === 'toolUseBlock') {
+        const toolUse = block as { toolUseId: string; name: string; input?: unknown }
+        toolUses.set(toolUse.toolUseId, { name: toolUse.name, input: toolUse.input })
+      }
+
+      if (block.type === 'toolResultBlock') {
+        const toolResult = block as { toolUseId: string }
+        const toolUse = toolUses.get(toolResult.toolUseId)
+        const values = extractToolResultValues(block)
+        const result = values.length === 1 ? values[0] : values
+        trace.push({
+          type: 'tool',
+          name: toolUse?.name ?? 'unknown_tool',
+          input: toolUse?.input,
+          result,
+          ok: isSuccessfulToolResult(result),
+        })
+      }
+    }
+  }
+
+  return trace
+}
+
+function isSuccessfulToolResult(result: unknown): boolean {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return true
+  const record = result as Record<string, unknown>
+  return record.ok !== false && !record.error
 }
 
 function recordsFromValue(value: unknown): Array<Record<string, unknown>> {
@@ -305,6 +390,12 @@ async function getOrCreateAgent(
     input.webmcpAuthHeader ?? config.webmcpAuthHeader ?? '',
     tokenFingerprint(input.webmcpAuthValue ?? config.webmcpAuthValue ?? ''),
     input.allowWebMcpWrites ?? config.allowWebMcpWrites,
+    config.browserMcpEnabled,
+    config.browserMcpCommand ?? '',
+    config.browserMcpArgs.join(','),
+    config.context7Enabled,
+    config.context7Command,
+    config.context7Args.join(','),
   ].join('|')
 
   const existing = agents.get(cacheKey)
@@ -397,6 +488,12 @@ function mergeRuntimeConfig(config: LocalAgentConfig, input: RunAgentInput): Loc
     openAiModel: input.openAiModel ?? config.openAiModel,
     ollamaBaseUrl: input.ollamaBaseUrl ?? config.ollamaBaseUrl,
     ollamaModel: input.ollamaModel ?? config.ollamaModel,
+    browserMcpEnabled: input.browserMcpEnabled ?? config.browserMcpEnabled,
+    browserMcpCommand: input.browserMcpCommand ?? config.browserMcpCommand,
+    browserMcpArgs: input.browserMcpArgs ?? config.browserMcpArgs,
+    context7Enabled: input.context7Enabled ?? config.context7Enabled,
+    context7Command: input.context7Command ?? config.context7Command,
+    context7Args: input.context7Args ?? config.context7Args,
   }
 }
 

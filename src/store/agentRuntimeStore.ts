@@ -9,10 +9,18 @@ interface AgentRuntimeState {
   ollamaModel: string;
   openAiApiKey: string;
   openAiModel: string;
+  browserMcpEnabled: boolean;
+  browserMcpCommand: string;
+  browserMcpArgs: string;
+  context7Enabled: boolean;
+  context7Command: string;
+  context7Args: string;
   setAgentUrl: (agentUrl: string) => void;
   setModelProvider: (modelProvider: StrandsModelProvider) => void;
   setOllamaConfig: (config: { baseUrl?: string; model?: string }) => void;
   setOpenAiConfig: (config: { apiKey?: string; model?: string }) => void;
+  setBrowserMcpConfig: (config: { enabled?: boolean; command?: string; args?: string }) => void;
+  setContext7Config: (config: { enabled?: boolean; command?: string; args?: string }) => void;
   reset: () => void;
 }
 
@@ -23,6 +31,12 @@ const defaults = {
   ollamaModel: import.meta.env.VITE_OLLAMA_MODEL ?? 'qwen2.5:7b',
   openAiApiKey: '',
   openAiModel: import.meta.env.VITE_OPENAI_MODEL ?? 'gpt-4o-mini',
+  browserMcpEnabled: import.meta.env.VITE_BROWSER_MCP_ENABLED === 'true',
+  browserMcpCommand: import.meta.env.VITE_BROWSER_MCP_COMMAND ?? '',
+  browserMcpArgs: import.meta.env.VITE_BROWSER_MCP_ARGS ?? '',
+  context7Enabled: import.meta.env.VITE_CONTEXT7_MCP_ENABLED === 'true',
+  context7Command: import.meta.env.VITE_CONTEXT7_MCP_COMMAND ?? '',
+  context7Args: import.meta.env.VITE_CONTEXT7_MCP_ARGS ?? '',
 };
 
 export const useAgentRuntimeStore = create<AgentRuntimeState>()((set) => ({
@@ -38,6 +52,18 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>()((set) => ({
     set((state) => ({
       openAiApiKey: config.apiKey ?? state.openAiApiKey,
       openAiModel: config.model ?? state.openAiModel,
+    })),
+  setBrowserMcpConfig: (config) =>
+    set((state) => ({
+      browserMcpEnabled: config.enabled ?? state.browserMcpEnabled,
+      browserMcpCommand: config.command ?? state.browserMcpCommand,
+      browserMcpArgs: config.args ?? state.browserMcpArgs,
+    })),
+  setContext7Config: (config) =>
+    set((state) => ({
+      context7Enabled: config.enabled ?? state.context7Enabled,
+      context7Command: config.command ?? state.context7Command,
+      context7Args: config.args ?? state.context7Args,
     })),
   reset: () => set(defaults),
 }));

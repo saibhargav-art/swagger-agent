@@ -18,11 +18,20 @@ export interface RuntimeConfirmation {
   details: Record<string, unknown>;
 }
 
+export interface RuntimeTraceStep {
+  type: 'tool';
+  name: string;
+  input?: unknown;
+  result?: unknown;
+  ok: boolean;
+}
+
 export interface Message {
   id: string;
   role: MessageRole;
   content: string;
   toolCall?: ToolCall;
+  runtimeTrace?: RuntimeTraceStep[];
   runtimeConfirmation?: RuntimeConfirmation;
   timestamp: number;
   isStreaming?: boolean;

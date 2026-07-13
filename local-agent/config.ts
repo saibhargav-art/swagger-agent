@@ -10,10 +10,11 @@ export type LocalAgentConfig = {
   openAiModel: string
   ollamaBaseUrl: string
   ollamaModel: string
+  browserMcpEnabled: boolean
   browserMcpCommand?: string
   browserMcpArgs: string[]
   context7Enabled: boolean
-  context7Command: string
+  context7Command?: string
   context7Args: string[]
 }
 
@@ -32,11 +33,12 @@ export function readConfig(argv: string[] = process.argv.slice(2)): LocalAgentCo
     openAiModel: optionalEnv('OPENAI_MODEL') ?? 'gpt-4o-mini',
     ollamaBaseUrl: optionalEnv('OLLAMA_BASE_URL') ?? 'http://127.0.0.1:11434',
     ollamaModel: optionalEnv('OLLAMA_MODEL') ?? 'qwen2.5:7b',
+    browserMcpEnabled: process.env.BROWSER_MCP_ENABLED === 'true' || Boolean(optionalEnv('BROWSER_MCP_COMMAND')),
     browserMcpCommand: optionalEnv('BROWSER_MCP_COMMAND'),
     browserMcpArgs: parseArgs(optionalEnv('BROWSER_MCP_ARGS')),
     context7Enabled: process.env.CONTEXT7_MCP_ENABLED === 'true',
-    context7Command: optionalEnv('CONTEXT7_MCP_COMMAND') ?? 'npx',
-    context7Args: parseArgs(optionalEnv('CONTEXT7_MCP_ARGS')) ?? ['-y', '@upstash/context7-mcp'],
+    context7Command: optionalEnv('CONTEXT7_MCP_COMMAND'),
+    context7Args: parseArgs(optionalEnv('CONTEXT7_MCP_ARGS')),
   }
 }
 
@@ -55,7 +57,8 @@ Optional:
   OLLAMA_BASE_URL=http://127.0.0.1:11434
   OLLAMA_MODEL=qwen2.5:7b
   ALLOW_WEBMCP_WRITES=true             Allow create/update/delete API calls
-  BROWSER_MCP_COMMAND=<command>        Enable browser MCP server
+  BROWSER_MCP_ENABLED=true            Enable browser MCP from env defaults
+  BROWSER_MCP_COMMAND=<command>        Browser MCP server command
   BROWSER_MCP_ARGS='["arg1","arg2"]'
   CONTEXT7_MCP_ENABLED=true            Enable Context7 MCP
 `)

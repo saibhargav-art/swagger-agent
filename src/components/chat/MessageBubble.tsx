@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { Bot, CheckCircle, Loader2, User, Wrench, XCircle } from 'lucide-react';
+import { Bot, CheckCircle, ChevronDown, ChevronRight, Loader2, User, Wrench, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { strandsLocalRuntime } from '@/services/runtime';
 import { useChatStore } from '@/store/chatStore';
 import { cn } from '@/utils/cn';
 import { formatDuration, formatTime } from '@/utils/format';
-import type { Message, RuntimeConfirmation, ToolCall } from '@/types/chat';
+import type { Message, RuntimeConfirmation, RuntimeTraceStep, ToolCall } from '@/types/chat';
 
 interface Props {
   message: Message;
@@ -47,6 +47,7 @@ export default function MessageBubble({ message }: Props) {
         ) : null}
 
         {message.toolCall ? <ToolCallCard toolCall={message.toolCall} /> : null}
+        {!isUser && message.runtimeTrace?.length ? <RuntimeTraceCard steps={message.runtimeTrace} /> : null}
 
         {!visibleContent && !message.toolCall && !message.runtimeConfirmation && !message.isStreaming ? (
           <div className="rounded-2xl rounded-tl-md bg-slate-100 px-4 py-3 text-sm text-slate-500">
@@ -87,6 +88,7 @@ function RuntimeConfirmationCard({
       const result = await strandsLocalRuntime.confirm(confirmation.runId, approved);
       updateMessage(activeConversationId, messageId, {
         content: result.content ?? (approved ? 'Action completed.' : 'Cancelled the pending action.'),
+        runtimeTrace: result.trace,
         runtimeConfirmation: undefined,
         isStreaming: false,
       });
@@ -123,6 +125,56 @@ function RuntimeConfirmationCard({
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function RuntimeTraceCard({ steps }: { steps: RuntimeTraceStep[] }) {
+  const [open, setOpen] = useState(false);
+  const visibleSteps = steps.filter((step) => step.type === 'tool');
+  if (visibleSteps.length === 0) return null;
+
+  return (
+    <div className="w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-sm shadow-sm">
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-center gap-2 border-b border-slate-100 bg-slate-50 px-3 py-2 text-left"
+      >
+        {open ? <ChevronDown size={14} className="text-slate-500" /> : <ChevronRight size={14} className="text-slate-500" />}
+        <Wrench size={13} className="text-slate-500" />
+        <span className="font-medium text-slate-800">
+          {visibleSteps.length === 1 ? '1 tool action' : `${visibleSteps.length} tool actions`}
+        </span>
+        <span className="ml-auto text-xs text-slate-500">
+          {visibleSteps.every((step) => step.ok) ? 'Completed' : 'Needs attention'}
+        </span>
+      </button>
+
+      {open ? (
+        <div className="grid gap-3 px-3 py-3">
+          {visibleSteps.map((step, index) => (
+            <div key={`${step.name}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+              <div className="flex items-center gap-2">
+                <StatusBadge status={step.ok ? 'success' : 'error'} />
+                <span className="font-mono text-xs font-medium text-slate-800">{step.name}</span>
+              </div>
+              {isDisplayable(step.input) ? (
+                <div className="mt-2">
+                  <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">Input</div>
+                  <ResultPreview result={step.input} />
+                </div>
+              ) : null}
+              {isDisplayable(step.result) ? (
+                <div className="mt-2">
+                  <div className="mb-1 text-[11px] font-semibold uppercase text-slate-400">Result</div>
+                  <ResultPreview result={step.result} />
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -242,6 +294,13 @@ function stripToolPayload(content: string) {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isDisplayable(value: unknown) {
+  if (value === undefined || value === null || value === '') return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === 'object') return Object.keys(value).length > 0;
+  return true;
 }
 
 function shouldDisplayField(key: string) {

@@ -22,6 +22,16 @@ const server = http.createServer(async (req, res) => {
       defaultModelProvider: config.modelProvider,
       ollamaBaseUrl: config.ollamaBaseUrl,
       ollamaModel: config.ollamaModel,
+      mcpServers: {
+        browser: {
+          enabled: config.browserMcpEnabled,
+          configured: Boolean(config.browserMcpCommand),
+        },
+        context7: {
+          enabled: config.context7Enabled,
+          configured: Boolean(config.context7Command),
+        },
+      },
     })
     return
   }

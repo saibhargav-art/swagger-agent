@@ -40,6 +40,12 @@ export class ChatService {
           });
         }
 
+        if (event.type === 'trace') {
+          updateMessage(conversationId, assistantMsgId, {
+            runtimeTrace: event.steps,
+          });
+        }
+
         if (event.type === 'error') {
           updateMessage(conversationId, assistantMsgId, {
             content: `Local Strands agent error: ${event.message}`,

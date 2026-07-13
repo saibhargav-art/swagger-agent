@@ -5,6 +5,14 @@ export type AgentRuntimeRequest = {
   conversationId?: string
 }
 
+export type AgentRuntimeTraceStep = {
+  type: 'tool'
+  name: string
+  input?: unknown
+  result?: unknown
+  ok: boolean
+}
+
 export type AgentRuntimeEvent =
   | {
       type: 'text'
@@ -26,6 +34,10 @@ export type AgentRuntimeEvent =
       runId: string
       title: string
       details: Record<string, unknown>
+    }
+  | {
+      type: 'trace'
+      steps: AgentRuntimeTraceStep[]
     }
   | {
       type: 'choice-required'

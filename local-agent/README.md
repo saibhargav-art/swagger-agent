@@ -48,7 +48,7 @@ $env:VITE_STRANDS_AGENT_URL="http://localhost:8787"
 npm run dev
 ```
 
-Configure Ollama/OpenAI/Bedrock from the Connections page. The terminal only needs to keep the local agent service running.
+Configure Ollama/OpenAI/Bedrock, Browser MCP, and Context7 from the Connections page. The terminal only needs to keep the local agent service running.
 
 ## Performance Knobs
 
@@ -88,12 +88,15 @@ npm run agent:poc -- "create an order for avinash worth 7800"
 
 ## Browser MCP
 
-Set these when you have a browser MCP server command available:
+Browser MCP can be configured from the Connections page. You can also set defaults in the local agent process:
 
 ```powershell
+$env:BROWSER_MCP_ENABLED="true"
 $env:BROWSER_MCP_COMMAND="<browser-mcp-command>"
 $env:BROWSER_MCP_ARGS='["arg1","arg2"]'
 ```
+
+When Browser MCP is enabled, Strands can use browser tools for page navigation, visible state, login/OTP handoff, and other UI-only actions. WebMCP tools remain the preferred path for direct customer app API actions.
 
 ## Why This Shape
 
