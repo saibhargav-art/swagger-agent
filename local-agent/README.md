@@ -103,10 +103,10 @@ For the BrowserMCP project, use the preset in the Connections page or set:
 ```powershell
 $env:BROWSER_MCP_ENABLED="true"
 $env:BROWSER_MCP_COMMAND="npx"
-$env:BROWSER_MCP_ARGS='["-y","@browsermcp/mcp@latest"]'
+$env:BROWSER_MCP_ARGS='["@browsermcp/mcp@latest"]'
 ```
 
-Then connect the BrowserMCP browser extension/session as required by that server. Ask browser-specific requests such as "open the connected website orders page" or "use the website UI to create an order".
+Then install the BrowserMCP extension, open the extension from the browser toolbar, and click Connect. BrowserMCP performs actions on the connected tab. Ask browser-specific requests such as "open the connected website orders page" or "use the website UI to create an order".
 
 ## Why This Shape
 

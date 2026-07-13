@@ -68,7 +68,6 @@ const clientCleanup = new Map<string, ReturnType<typeof createMcpClients>>()
 const MAX_AGENT_TURNS = Number(process.env.STRANDS_MAX_TURNS ?? 4)
 const MAX_AGENT_TOKENS = Number(process.env.STRANDS_MAX_TOKENS ?? 6000)
 const MAX_HISTORY_MESSAGES = Number(process.env.STRANDS_MAX_HISTORY_MESSAGES ?? 6)
-const AGENT_TIMEOUT_MS = Number(process.env.STRANDS_AGENT_TIMEOUT_MS ?? 90000)
 
 export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): Promise<RunAgentResult> {
   const conversationId = input.conversationId?.trim() || 'default'
@@ -109,15 +108,12 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
   const agent = await getOrCreateAgent(effectiveConfig, conversationId, input)
   trimAgentHistory(agent)
   const beforeMessageCount = agent.messages.length
-  const result = await withTimeout(
-    agent.invoke(withRuntimeContext(input.message, effectiveConfig, input), {
-      limits: {
-        turns: browserOnlyRequest(input.message) ? 2 : MAX_AGENT_TURNS,
-        totalTokens: MAX_AGENT_TOKENS,
-      },
-    }),
-    AGENT_TIMEOUT_MS,
-  )
+  const result = await agent.invoke(withRuntimeContext(input.message, effectiveConfig, input), {
+    limits: {
+      turns: browserOnlyRequest(input.message) ? 2 : MAX_AGENT_TURNS,
+      totalTokens: MAX_AGENT_TOKENS,
+    },
+  })
   const content = result.toString().trim()
   const trace = extractTrace(agent.messages.slice(beforeMessageCount))
   const pendingWrite = getPendingWebMcpWrite(conversationId)
@@ -288,6 +284,9 @@ function extractTrace(messages: Message[]): AgentTraceStep[] {
 }
 
 function isSuccessfulToolResult(result: unknown): boolean {
+  if (typeof result === 'string') {
+    return !/\b(error|failed|not connected|client closed|timed out|timeout|unable|cannot)\b/i.test(result)
+  }
   if (!result || typeof result !== 'object' || Array.isArray(result)) return true
   const record = result as Record<string, unknown>
   return record.ok !== false && !record.error
@@ -560,23 +559,6 @@ function browserOnlyRequest(message: string): boolean {
   const targetsPage = /\b(browser|website|site|page|screen|ui|orders page|dashboard|login)\b/.test(text)
   const asksForDataAction = /\b(create|delete|update|list|get|search|find|check|status|duplicate)\b/.test(text)
   return asksForBrowser && targetsPage && !asksForDataAction
-}
-
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(
-          () => reject(new Error(`Local agent timed out after ${Math.round(timeoutMs / 1000)} seconds. Try a narrower request or a faster tool-capable model.`)),
-          timeoutMs,
-        )
-      }),
-    ])
-  } finally {
-    if (timer) clearTimeout(timer)
-  }
 }
 
 function systemPrompt(): string {

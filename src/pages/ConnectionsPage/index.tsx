@@ -355,7 +355,7 @@ export default function ConnectionsPage() {
                   <div>
                     <div className="text-xs font-semibold text-slate-800">Browser MCP</div>
                     <p className="mt-1 text-xs text-slate-500">
-                      Optional. Enable only after installing a Browser MCP server. It lets the local agent open pages, click, type, and inspect visible UI when APIs are not enough.
+                      Optional. Requires the Browser MCP extension to be installed and connected to a tab. The agent can then open pages, click, type, and inspect visible UI.
                     </p>
                     <button
                       type="button"
@@ -364,7 +364,7 @@ export default function ConnectionsPage() {
                         setBrowserMcpConfig({
                           enabled: true,
                           command: 'npx',
-                          args: '-y @browsermcp/mcp@latest',
+                          args: '@browsermcp/mcp@latest',
                         })
                       }
                     >

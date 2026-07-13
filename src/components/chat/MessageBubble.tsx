@@ -231,7 +231,15 @@ function StatusBadge({ status }: { status: ToolCall['status'] }) {
 }
 
 function ResultPreview({ result }: { result: unknown }) {
-  if (!result || typeof result === 'string') return null;
+  if (!result) return null;
+
+  if (typeof result === 'string') {
+    return (
+      <div className="mt-2 whitespace-pre-wrap rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-700">
+        {result}
+      </div>
+    );
+  }
 
   if (Array.isArray(result)) {
     const records = result.filter(isRecord);
