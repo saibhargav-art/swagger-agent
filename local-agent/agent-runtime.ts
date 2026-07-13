@@ -98,8 +98,11 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
 
     try {
       const result = await navigateWithBrowserMcp(effectiveConfig, url)
+      const ok = isSuccessfulToolResult(result.result)
       return {
-        content: `Opened ${url} in the connected browser session.`,
+        content: ok
+          ? `Opened ${url} in the connected browser session.`
+          : `Browser MCP could not open ${url}. ${toolResultText(result.result)}`,
         stopReason: 'endTurn',
         trace: [
           {
@@ -107,7 +110,7 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
             name: result.toolName,
             input: { url },
             result: result.result,
-            ok: isSuccessfulToolResult(result.result),
+            ok,
           },
         ],
       }
@@ -344,7 +347,25 @@ function isSuccessfulToolResult(result: unknown): boolean {
   }
   if (!result || typeof result !== 'object' || Array.isArray(result)) return true
   const record = result as Record<string, unknown>
-  return record.ok !== false && !record.error
+  return record.ok !== false && record.isError !== true && !record.error
+}
+
+function toolResultText(result: unknown): string {
+  if (typeof result === 'string') return result
+  if (!result || typeof result !== 'object') return ''
+
+  const record = result as Record<string, unknown>
+  const content = Array.isArray(record.content) ? record.content : []
+  const text = content
+    .map((item) => {
+      if (!item || typeof item !== 'object') return ''
+      const maybeText = (item as Record<string, unknown>).text
+      return typeof maybeText === 'string' ? maybeText : ''
+    })
+    .filter(Boolean)
+    .join(' ')
+
+  return text || JSON.stringify(result)
 }
 
 function recordsFromValue(value: unknown): Array<Record<string, unknown>> {
