@@ -61,13 +61,16 @@ Configure Ollama/OpenAI/Bedrock, Playwright browser automation, and Context7 fro
 Local Ollama tool-calling speed depends heavily on model size, CPU/GPU, and conversation history. Defaults are tuned for responsiveness:
 
 ```powershell
-$env:STRANDS_MAX_TURNS="4"
+$env:STRANDS_MAX_TURNS="3"
+$env:STRANDS_TOOL_LIMIT="6"
 $env:STRANDS_MAX_TOKENS="6000"
 $env:STRANDS_MAX_HISTORY_MESSAGES="6"
 $env:OLLAMA_NUM_PREDICT="768"
 $env:OLLAMA_NUM_CTX="4096"
 $env:OLLAMA_KEEP_ALIVE="10m"
 ```
+
+The runtime retrieves a small relevant subset from the connected tool catalog for each message. The model still makes the final tool choice, while avoiding the latency and ambiguity of sending every full schema on every turn.
 
 For timing logs:
 

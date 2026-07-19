@@ -59,6 +59,16 @@ export function toolResultText(result: unknown): string {
   return text || JSON.stringify(result)
 }
 
+export function hasFailedToolResult(message: Message): boolean {
+  return message.content.some((block) => {
+    if (block.type !== 'toolResultBlock') return false
+    const status = (block as { status?: unknown }).status
+    if (status === 'error') return true
+    const values = extractToolResultValues(block)
+    return values.some((value) => !isSuccessfulToolResult(value))
+  })
+}
+
 function extractToolResultValues(block: unknown): unknown[] {
   const content = (block as { content?: unknown[] }).content ?? []
   return content.flatMap((item) => {

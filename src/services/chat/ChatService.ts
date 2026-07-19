@@ -9,17 +9,23 @@ export class ChatService {
     if (!conversation) return;
 
     const assistantMessageId = generateId();
-    addMessage(conversationId, {
-      id: assistantMessageId,
-      role: 'assistant',
-      content: '',
-      timestamp: Date.now(),
-      isStreaming: true,
-    });
+    let assistantAdded = false;
+    const ensureAssistantMessage = () => {
+      if (assistantAdded) return;
+      addMessage(conversationId, {
+        id: assistantMessageId,
+        role: 'assistant',
+        content: '',
+        timestamp: Date.now(),
+        isStreaming: true,
+      });
+      assistantAdded = true;
+    };
     setStreaming(true);
 
     try {
       for await (const event of strandsLocalRuntime.send({ conversationId, message: userContent })) {
+        ensureAssistantMessage();
         if (event.type === 'text') {
           updateMessage(conversationId, assistantMessageId, {
             content: event.text,
@@ -52,6 +58,7 @@ export class ChatService {
         }
       }
     } catch (error) {
+      ensureAssistantMessage();
       updateMessage(conversationId, assistantMessageId, {
         content: error instanceof TypeError
           ? 'The local agent is unavailable. Start it with `npm run agent:server`, then try again.'
@@ -61,7 +68,9 @@ export class ChatService {
       });
     } finally {
       setStreaming(false);
-      updateMessage(conversationId, assistantMessageId, { isStreaming: false });
+      if (assistantAdded) {
+        updateMessage(conversationId, assistantMessageId, { isStreaming: false });
+      }
     }
   }
 }

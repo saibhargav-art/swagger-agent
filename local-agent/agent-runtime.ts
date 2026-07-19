@@ -3,7 +3,7 @@ import {
   Agent,
   BeforeToolsEvent,
   type Message,
-  type ToolList,
+  type Tool,
 } from '@strands-agents/sdk'
 import { OpenAIModel } from '@strands-agents/sdk/models/openai'
 
@@ -22,7 +22,12 @@ import {
 } from './tools/webmcp-tools.js'
 import type { LocalAgentConfig } from './config.js'
 import { OllamaModel } from './models/ollama-model.js'
-import { extractTrace, isSuccessfulToolResult } from './runtime/agent-trace.js'
+import {
+  extractTrace,
+  hasFailedToolResult,
+  isSuccessfulToolResult,
+  toolResultText,
+} from './runtime/agent-trace.js'
 import {
   browserNavigationResult,
   captureBrowserSignIn,
@@ -36,11 +41,20 @@ import type {
   RunAgentInput,
   RunAgentResult,
 } from './runtime/types.js'
+import { compactToolCatalog, selectToolsForMessage } from './runtime/tool-retrieval.js'
 
 const AGENT_CACHE_TTL_MS = 60 * 60 * 1000
 const MAX_CACHED_AGENTS = 50
-const agents = new Map<string, { agent: Agent; connectionId?: string; lastUsedAt: number }>()
-const MAX_AGENT_TURNS = Number(process.env.STRANDS_MAX_TURNS ?? 4)
+type AgentEntry = {
+  agent: Agent
+  availableTools: Tool[]
+  selectedToolNames: string[]
+  connectionId?: string
+  lastUsedAt: number
+}
+
+const agents = new Map<string, AgentEntry>()
+const MAX_AGENT_TURNS = Number(process.env.STRANDS_MAX_TURNS ?? 3)
 const MAX_AGENT_TOKENS = Number(process.env.STRANDS_MAX_TOKENS ?? 6000)
 const MAX_HISTORY_MESSAGES = Number(process.env.STRANDS_MAX_HISTORY_MESSAGES ?? 6)
 const browserNavigationInvocations = new WeakSet<object>()
@@ -83,10 +97,20 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
     }
   }
 
-  const agent = await getOrCreateAgent(effectiveConfig, conversationId, input)
+  const entry = await getOrCreateAgent(effectiveConfig, conversationId, input)
+  const selection = selectToolsForMessage(entry.availableTools, input.message, entry.selectedToolNames)
+  entry.agent.toolRegistry.clear()
+  if (selection.tools.length > 0) entry.agent.toolRegistry.add(selection.tools)
+  entry.selectedToolNames = selection.names
+  const agent = entry.agent
   trimAgentHistory(agent)
   const beforeMessageCount = agent.messages.length
-  const result = await agent.invoke(withRuntimeContext(input.message, effectiveConfig, input), {
+  const result = await agent.invoke(withRuntimeContext(
+    input.message,
+    effectiveConfig,
+    input,
+    entry.availableTools,
+  ), {
     limits: {
       turns: MAX_AGENT_TURNS,
       totalTokens: MAX_AGENT_TOKENS,
@@ -110,6 +134,14 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
         title: pendingWrite.title,
         details: pendingWrite.input,
       },
+    }
+  }
+  const failedTool = trace.find((step) => !step.ok)
+  if (failedTool) {
+    return {
+      content: summarizeToolFailure(failedTool.result),
+      stopReason: result.stopReason,
+      trace,
     }
   }
 
@@ -209,7 +241,7 @@ async function getOrCreateAgent(
   config: LocalAgentConfig,
   conversationId: string,
   input: RunAgentInput,
-): Promise<Agent> {
+): Promise<AgentEntry> {
   const cacheKey = [
     conversationId,
     config.modelProvider,
@@ -235,15 +267,15 @@ async function getOrCreateAgent(
   const existing = agents.get(cacheKey)
   if (existing) {
     existing.lastUsedAt = Date.now()
-    return existing.agent
+    return existing
   }
 
-  const tools: ToolList = [...await createMcpTools(config)]
+  const availableTools: Tool[] = [...await createMcpTools(config)]
   const baseUrl = input.webmcpBaseUrl ?? config.webmcpBaseUrl
 
   if (baseUrl) {
-    tools.push(
-      await createWebMcpTools({
+    availableTools.push(
+      ...await createWebMcpTools({
         baseUrl,
         bearerToken: input.webmcpBearerToken ?? config.webmcpBearerToken,
         authHeader: input.webmcpAuthHeader ?? config.webmcpAuthHeader,
@@ -256,12 +288,13 @@ async function getOrCreateAgent(
   }
 
   const model = createModel(config)
+  const initialSelection = selectToolsForMessage(availableTools, input.message)
 
   const agent = new Agent({
     name: 'Swagger Local Agent',
     description: 'Local Strands agent that can use browser MCP and WebMCP customer tools.',
     model,
-    tools,
+    tools: initialSelection.tools,
     toolExecutor: 'sequential',
     printer: false,
     systemPrompt: systemPrompt(),
@@ -275,18 +308,29 @@ async function getOrCreateAgent(
     }
   })
   agent.addHook(AfterToolsEvent, (event) => {
+    if (hasPendingWebMcpWrite(conversationId)) {
+      event.endTurn = 'Write confirmation required.'
+      return
+    }
+    if (hasFailedToolResult(event.message)) {
+      event.endTurn = 'The tool call failed.'
+      return
+    }
     if (browserNavigationInvocations.delete(event.invocationState)) {
       event.endTurn = 'Browser navigation completed.'
     }
   })
 
-  agents.set(cacheKey, {
+  const entry: AgentEntry = {
     agent,
+    availableTools,
+    selectedToolNames: initialSelection.names,
     connectionId: input.customerConnectionId,
     lastUsedAt: Date.now(),
-  })
+  }
+  agents.set(cacheKey, entry)
   pruneAgentCache()
-  return agent
+  return entry
 }
 
 function pruneAgentCache(): void {
@@ -325,6 +369,24 @@ function summarizeApprovedWrite(result: unknown): string {
   }
 
   return `Confirmed. The action completed successfully.${result ? ` ${String(result)}` : ''}`
+}
+
+function summarizeToolFailure(result: unknown): string {
+  const text = toolResultText(result)
+  if (/invalid session|jwt|expired|unauthorized|\b401\b/i.test(text)) {
+    return 'The customer session is invalid or expired. Sign in to the customer app again, update the access token in Connections, and reconnect.'
+  }
+  if (/no connection to browser extension/i.test(text)) {
+    return 'Browser automation is not connected to a browser tab. Connect the Browser MCP extension to the customer-app tab, then retry.'
+  }
+  if (/target page|browser context|browser has been closed/i.test(text)) {
+    return 'The managed browser session was closed. Retry once to start a fresh browser session.'
+  }
+
+  const concise = text.replace(/\s+/g, ' ').trim()
+  return concise
+    ? `The connected tool failed: ${concise.slice(0, 500)}`
+    : 'The connected tool failed without returning an error message.'
 }
 
 function tokenFingerprint(value: string): string {
@@ -384,8 +446,14 @@ function trimAgentHistory(agent: Agent): void {
   if (overflow > 0) agent.messages.splice(0, overflow)
 }
 
-function withRuntimeContext(message: string, config: LocalAgentConfig, input: RunAgentInput): string {
+function withRuntimeContext(
+  message: string,
+  config: LocalAgentConfig,
+  input: RunAgentInput,
+  availableTools: Tool[],
+): string {
   const browserEnabled = config.browserMcpEnabled && Boolean(config.browserMcpCommand)
+  const actionCatalog = compactToolCatalog(availableTools)
   const context = [
     input.webmcpBaseUrl ? `Connected website base URL: ${input.webmcpBaseUrl}.` : '',
     input.webmcpLoginUrl ? `Customer login URL: ${input.webmcpLoginUrl}.` : '',
@@ -393,6 +461,9 @@ function withRuntimeContext(message: string, config: LocalAgentConfig, input: Ru
     browserEnabled
       ? 'Browser MCP is available for visible browser actions.'
       : 'Browser MCP is not available in this run; use WebMCP API tools or explain that browser automation is not configured.',
+    actionCatalog
+      ? `Connected app action catalog: ${actionCatalog}.`
+      : '',
   ].filter(Boolean).join(' ')
 
   return context ? `${message}\n\nRuntime context:\n${context}` : message
