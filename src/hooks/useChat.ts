@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { useChatStore } from '@/store/chatStore';
-import { chatService } from '@/services/ai/ChatService';
+import { chatService } from '@/services/chat/ChatService';
 import { generateId } from '@/utils/format';
 
 export function useChat() {

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import type { Conversation, Message, PendingToolRequest } from '@/types/chat';
+import { createJSONStorage, persist } from 'zustand/middleware';
+import type { Conversation, Message } from '@/types/chat';
 import { generateId } from '@/utils/format';
 
 interface ChatState {
@@ -20,15 +21,13 @@ interface ChatState {
     messageId: string,
     updates: Partial<Message>
   ) => void;
-  setPendingToolRequest: (conversationId: string, pending: PendingToolRequest | null) => void;
-
   setStreaming: (streaming: boolean) => void;
 
   // Derived
   getActiveConversation: () => Conversation | undefined;
 }
 
-export const useChatStore = create<ChatState>()((set, get) => ({
+export const useChatStore = create<ChatState>()(persist((set, get) => ({
   conversations: [],
   activeConversationId: null,
   isStreaming: false,
@@ -107,24 +106,23 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     }));
   },
 
-  setPendingToolRequest: (conversationId, pending) => {
-    set((s) => ({
-      conversations: s.conversations.map((c) =>
-        c.id === conversationId
-          ? {
-              ...c,
-              pendingToolRequest: pending ?? undefined,
-              updatedAt: Date.now(),
-            }
-          : c
-      ),
-    }));
-  },
-
   setStreaming: (isStreaming) => set({ isStreaming }),
 
   getActiveConversation: () => {
     const { conversations, activeConversationId } = get();
     return conversations.find((c) => c.id === activeConversationId);
   },
+}), {
+  name: 'swagger-agent-chat-session',
+  storage: createJSONStorage(() => sessionStorage),
+  partialize: (state) => ({
+    conversations: state.conversations.map((conversation) => ({
+      ...conversation,
+      messages: conversation.messages.map((message) => ({
+        ...message,
+        isStreaming: false,
+      })),
+    })),
+    activeConversationId: state.activeConversationId,
+  }),
 }));

@@ -1,10 +1,11 @@
+import { createHash } from 'node:crypto'
+
 import { tool, type JSONSchema, type JSONValue } from '@strands-agents/sdk'
 
 import type {
   JsonObject,
   OpenApiDocument,
   OpenApiOperation,
-  OpenApiParameter,
   WebMcpOperation,
 } from '../types.js'
 
@@ -17,23 +18,56 @@ type WebMcpToolOptions = {
   authValue?: string
   allowWrites: boolean
   confirmationSessionId?: string
+  customerConnectionId?: string
 }
 
 type PendingWrite = {
   operation: WebMcpOperation
   input: JsonObject
   options: WebMcpToolOptions
+  createdAt: number
 }
 
 type WebMcpAuthOverride = Pick<WebMcpToolOptions, 'bearerToken' | 'authHeader' | 'authValue'>
 
+export type WebMcpToolSummary = {
+  id: string
+  name: string
+  description: string
+  schema: {
+    parameters: Array<{
+      name: string
+      type: 'string' | 'number' | 'boolean' | 'array' | 'object'
+      description?: string
+      required: boolean
+      enum?: string[]
+    }>
+  }
+  annotations: {
+    readOnly: boolean
+    destructive: boolean
+  }
+}
+
+export type WebMcpDiscovery = {
+  appName?: string
+  appDescription?: string
+  tools: WebMcpToolSummary[]
+}
+
+type LoadedContract = {
+  document: OpenApiDocument
+  operations: WebMcpOperation[]
+}
+
+const CONTRACT_CACHE_TTL_MS = 5 * 60 * 1000
+const PENDING_WRITE_TTL_MS = 10 * 60 * 1000
+const contractCache = new Map<string, { loadedAt: number; value: LoadedContract }>()
+
 const pendingWrites = new Map<string, PendingWrite>()
 
 export async function createWebMcpTools(options: WebMcpToolOptions) {
-  const contractUrl = resolveContractUrl(options.baseUrl)
-  const contract = await fetchJson<OpenApiDocument>(contractUrl)
-  const apiBaseUrl = resolveApiBaseUrl(contract, contractUrl)
-  const operations = parseOperations(contract, apiBaseUrl, contract['x-webmcp-headers'])
+  const { operations } = await loadContract(options)
 
   return operations.map((operation) =>
     tool({
@@ -45,12 +79,27 @@ export async function createWebMcpTools(options: WebMcpToolOptions) {
   )
 }
 
+export async function discoverWebMcpApp(
+  options: Pick<WebMcpToolOptions, 'baseUrl' | 'bearerToken' | 'authHeader' | 'authValue'>,
+): Promise<WebMcpDiscovery> {
+  const { document, operations } = await loadContract(options, true)
+  return {
+    appName: document.info?.title,
+    appDescription: document.info?.description,
+    tools: operations.map(toToolSummary),
+  }
+}
+
+export function clearWebMcpContractCache(): void {
+  contractCache.clear()
+}
+
 export function hasPendingWebMcpWrite(sessionId: string): boolean {
-  return pendingWrites.has(sessionId)
+  return Boolean(readPendingWrite(sessionId))
 }
 
 export function getPendingWebMcpWrite(sessionId: string) {
-  const pending = pendingWrites.get(sessionId)
+  const pending = readPendingWrite(sessionId)
   if (!pending) return null
 
   return {
@@ -64,7 +113,7 @@ export async function approvePendingWebMcpWrite(
   sessionId: string,
   authOverride: WebMcpAuthOverride = {},
 ): Promise<JSONValue | null> {
-  const pending = pendingWrites.get(sessionId)
+  const pending = readPendingWrite(sessionId)
   if (!pending) return null
 
   pendingWrites.delete(sessionId)
@@ -79,6 +128,12 @@ export function clearPendingWebMcpWrite(sessionId: string): void {
   pendingWrites.delete(sessionId)
 }
 
+export function clearPendingWebMcpWritesForConnection(connectionId: string): void {
+  for (const [sessionId, pending] of pendingWrites) {
+    if (pending.options.customerConnectionId === connectionId) pendingWrites.delete(sessionId)
+  }
+}
+
 function resolveContractUrl(baseUrl: string): URL {
   const url = new URL(baseUrl)
   if (url.pathname.endsWith('.json')) return url
@@ -89,6 +144,25 @@ function resolveContractUrl(baseUrl: string): URL {
 function resolveApiBaseUrl(contract: OpenApiDocument, contractUrl: URL): URL {
   const serverUrl = contract.servers?.find((server) => server.url)?.url
   return new URL(serverUrl ?? contractUrl.origin, contractUrl)
+}
+
+async function loadContract(
+  options: Pick<WebMcpToolOptions, 'baseUrl' | 'bearerToken' | 'authHeader' | 'authValue'>,
+  refresh = false,
+): Promise<LoadedContract> {
+  const contractUrl = resolveContractUrl(options.baseUrl)
+  const cacheKey = `${contractUrl.toString()}|${credentialFingerprint(options)}`
+  const cached = contractCache.get(cacheKey)
+  if (!refresh && cached && Date.now() - cached.loadedAt < CONTRACT_CACHE_TTL_MS) return cached.value
+
+  const document = await fetchJson<OpenApiDocument>(contractUrl, options)
+  const apiBaseUrl = resolveApiBaseUrl(document, contractUrl)
+  const value = {
+    document,
+    operations: parseOperations(document, apiBaseUrl, document['x-webmcp-headers']),
+  }
+  contractCache.set(cacheKey, { loadedAt: Date.now(), value })
+  return value
 }
 
 function parseOperations(
@@ -120,10 +194,8 @@ function parseOperations(
         requestBodyFields: requestBodyFieldNames(operation, contract),
         parameters: operation.parameters ?? [],
         staticHeaders: { ...rootHeaders, ...(operation['x-webmcp-headers'] ?? {}) },
-        scopes: operation['x-webmcp-scopes'] ?? [],
-        roles: operation['x-webmcp-roles'] ?? [],
-        intent: operation['x-webmcp-intent'],
-        requiresConfirmation: operation['x-webmcp-requires-confirmation'],
+        readOnlyHint: operation['x-webmcp']?.readOnlyHint,
+        destructiveHint: operation['x-webmcp']?.destructiveHint,
       })
     }
   }
@@ -193,7 +265,7 @@ async function executeOperation(
   const isWrite = isWriteOperation(operation)
   if (isWrite && !options.allowWrites) {
     if (options.confirmationSessionId) {
-      pendingWrites.set(options.confirmationSessionId, { operation, input, options })
+      pendingWrites.set(options.confirmationSessionId, { operation, input, options, createdAt: Date.now() })
     }
 
     return {
@@ -266,6 +338,14 @@ function definedAuthOverride(authOverride: WebMcpAuthOverride): WebMcpAuthOverri
   ) as WebMcpAuthOverride
 }
 
+function readPendingWrite(sessionId: string): PendingWrite | undefined {
+  const pending = pendingWrites.get(sessionId)
+  if (!pending) return undefined
+  if (Date.now() - pending.createdAt <= PENDING_WRITE_TTL_MS) return pending
+  pendingWrites.delete(sessionId)
+  return undefined
+}
+
 function buildBody(operation: WebMcpOperation, input: JsonObject): JsonObject | undefined {
   if (operation.requestBodyFields.size === 0) return undefined
 
@@ -276,10 +356,21 @@ function buildBody(operation: WebMcpOperation, input: JsonObject): JsonObject | 
   return body
 }
 
-async function fetchJson<T>(url: URL): Promise<T> {
-  const response = await fetch(url)
+async function fetchJson<T>(
+  url: URL,
+  auth: Pick<WebMcpToolOptions, 'bearerToken' | 'authHeader' | 'authValue'>,
+): Promise<T> {
+  const headers: Record<string, string> = { Accept: 'application/json' }
+  if (auth.bearerToken) headers.Authorization = `Bearer ${auth.bearerToken}`
+  if (auth.authHeader && auth.authValue) headers[auth.authHeader] = auth.authValue
+  const response = await fetch(url, { headers })
   if (!response.ok) throw new Error(`Failed to load ${url.toString()}: HTTP ${response.status}`)
-  return (await response.json()) as T
+  const text = await response.text()
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    throw new Error(`The customer app returned invalid JSON from ${url.toString()}.`)
+  }
 }
 
 async function parseResponse(response: Response): Promise<JSONValue> {
@@ -296,11 +387,7 @@ function describeOperation(operation: WebMcpOperation): string {
   const parts = [
     operation.description,
     `HTTP ${operation.method} ${operation.path}.`,
-    `Original operationId: ${operation.originalOperationId}.`,
   ]
-
-  if (operation.scopes.length) parts.push(`Required scopes: ${operation.scopes.join(', ')}.`)
-  if (operation.roles.length) parts.push(`Allowed roles: ${operation.roles.join(', ')}.`)
   if (isWriteOperation(operation)) {
     parts.push('This changes customer data. Ask for explicit user confirmation before invoking it.')
   } else {
@@ -311,17 +398,50 @@ function describeOperation(operation: WebMcpOperation): string {
 }
 
 function isWriteOperation(operation: WebMcpOperation): boolean {
-  if (operation.requiresConfirmation !== undefined) return operation.requiresConfirmation
-
-  if (operation.intent) {
-    return ['create', 'update', 'delete', 'approve', 'write', 'mutate'].includes(operation.intent)
-  }
-
-  const scopeText = operation.scopes.join(' ')
-  if (/\b(read|view|list|search|get)\b/i.test(scopeText)) return false
-  if (/\b(write|delete|admin|mutate)\b/i.test(scopeText)) return true
-
+  if (operation.readOnlyHint !== undefined) return !operation.readOnlyHint
   return !['GET', 'HEAD', 'OPTIONS'].includes(operation.method)
+}
+
+function toToolSummary(operation: WebMcpOperation): WebMcpToolSummary {
+  const schema = isRecord(operation.inputSchema) ? operation.inputSchema : {}
+  const properties = isRecord(schema.properties) ? schema.properties : {}
+  const required = new Set(Array.isArray(schema.required) ? schema.required.map(String) : [])
+  const readOnly = !isWriteOperation(operation)
+
+  return {
+    id: operation.name,
+    name: operation.name,
+    description: operation.summary || operation.description,
+    schema: {
+      parameters: Object.entries(properties).map(([name, value]) => {
+        const property = isRecord(value) ? value : {}
+        return {
+          name,
+          type: parameterType(property.type),
+          description: typeof property.description === 'string' ? property.description : undefined,
+          required: required.has(name),
+          enum: Array.isArray(property.enum) ? property.enum.map(String) : undefined,
+        }
+      }),
+    },
+    annotations: {
+      readOnly,
+      destructive: operation.destructiveHint ?? /delete|remove|revoke/i.test(operation.originalOperationId),
+    },
+  }
+}
+
+function parameterType(value: unknown): WebMcpToolSummary['schema']['parameters'][number]['type'] {
+  if (value === 'number' || value === 'integer') return 'number'
+  if (value === 'boolean' || value === 'array' || value === 'object') return value
+  return 'string'
+}
+
+function credentialFingerprint(
+  options: Pick<WebMcpToolOptions, 'bearerToken' | 'authHeader' | 'authValue'>,
+): string {
+  const value = `${options.bearerToken ?? ''}|${options.authHeader ?? ''}|${options.authValue ?? ''}`
+  return createHash('sha256').update(value).digest('hex')
 }
 
 function toToolName(operationId: string): string {

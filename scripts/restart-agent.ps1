@@ -14,6 +14,23 @@ function Stop-AgentOnPort {
   $connections = Get-NetTCPConnection -LocalPort $AgentPort -State Listen -ErrorAction SilentlyContinue
   $processIds = $connections | Select-Object -ExpandProperty OwningProcess -Unique
 
+  if ($processIds) {
+    try {
+      Write-Host "Requesting graceful local agent shutdown on port $AgentPort..."
+      Invoke-RestMethod -Uri "http://127.0.0.1:$AgentPort/shutdown" -Method Post -TimeoutSec 3 | Out-Null
+      for ($attempt = 0; $attempt -lt 20; $attempt += 1) {
+        Start-Sleep -Milliseconds 100
+        $stillListening = Get-NetTCPConnection -LocalPort $AgentPort -State Listen -ErrorAction SilentlyContinue
+        if (-not $stillListening) {
+          $script:stoppedCount += $processIds.Count
+          return
+        }
+      }
+    } catch {
+      Write-Host "Graceful shutdown was unavailable; stopping the existing process."
+    }
+  }
+
   foreach ($processId in $processIds) {
     if (-not $processId) {
       continue

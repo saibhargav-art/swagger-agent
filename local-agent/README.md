@@ -6,7 +6,7 @@ The React app should stay focused on connection UX and chat UI. This runtime own
 
 1. Load customer app tools from `/webapi.json`.
 2. Convert every OpenAPI operation into a Strands function tool.
-3. Optionally attach Browser MCP for browser control.
+3. Optionally attach Playwright MCP for browser control.
 4. Optionally attach Context7 MCP for documentation lookup.
 5. Let the model select tools and extract parameters from natural language.
 6. Let runtime policy enforce confirmations before write actions.
@@ -15,6 +15,8 @@ The React app should stay focused on connection UX and chat UI. This runtime own
 
 ```txt
 local-agent/
+  connections/
+    customer-connections.ts # in-memory authenticated connection registry
   agent-runtime.ts      # generic Strands orchestration
   server.ts             # local HTTP bridge for the React app
   strands-agent.ts      # CLI entry point
@@ -27,6 +29,8 @@ local-agent/
 ```
 
 Provider-specific code should stay under `models/`. Tool-source-specific code should stay under `tools/`.
+
+The React app establishes a customer connection through `POST /connections/customer`. The local service validates and caches the contract, keeps credentials in memory, and returns a sanitized tool catalog plus an opaque connection ID. Chat and confirmation requests send that ID instead of resending customer credentials.
 
 ## Run
 
@@ -44,11 +48,13 @@ npm run agent:server
 Then start the React app with:
 
 ```powershell
-$env:VITE_STRANDS_AGENT_URL="http://localhost:8787"
+$env:VITE_STRANDS_AGENT_URL="http://127.0.0.1:8787"
 npm run dev
 ```
 
-Configure Ollama/OpenAI/Bedrock, Browser MCP, and Context7 from the Connections page. The terminal only needs to keep the local agent service running.
+The service binds to `127.0.0.1` and accepts the chat UI origins `http://localhost:5173` and `http://127.0.0.1:5173` by default. Set `STRANDS_AGENT_CORS_ORIGIN` to a comma-separated allowlist when the UI runs elsewhere.
+
+Configure Ollama/OpenAI/Bedrock, Playwright browser automation, and Context7 from the Connections page. The terminal only needs to keep the local agent service running.
 
 ## Performance Knobs
 
@@ -86,9 +92,9 @@ $env:ALLOW_WEBMCP_WRITES="true"
 npm run agent:poc -- "create an order for avinash worth 7800"
 ```
 
-## Browser MCP
+## Browser Automation
 
-Browser MCP can be configured from the Connections page. You can also set defaults in the local agent process:
+Playwright MCP is pinned as an application dependency and configured from the Connections page. You can also set defaults in the local agent process:
 
 ```powershell
 $env:BROWSER_MCP_ENABLED="true"
@@ -96,17 +102,19 @@ $env:BROWSER_MCP_COMMAND="<browser-mcp-command>"
 $env:BROWSER_MCP_ARGS='["arg1","arg2"]'
 ```
 
-When Browser MCP is enabled, Strands can use browser tools for page navigation, visible state, login/OTP handoff, and other UI-only actions. WebMCP tools remain the preferred path for direct customer app API actions.
+When browser automation is enabled, Strands can create and switch tabs, navigate pages, inspect visible state, and handle login/OTP or other UI-only actions. WebMCP tools remain the preferred path for direct customer app API actions.
 
-For the BrowserMCP project, use the preset in the Connections page or set:
+The standard local configuration is:
 
 ```powershell
 $env:BROWSER_MCP_ENABLED="true"
 $env:BROWSER_MCP_COMMAND="npx"
-$env:BROWSER_MCP_ARGS='["@browsermcp/mcp@latest"]'
+$env:BROWSER_MCP_ARGS='["--no-install","@playwright/mcp","--browser","chrome"]'
 ```
 
-Then install the BrowserMCP extension, open the extension from the browser toolbar, and click Connect. BrowserMCP performs actions on the connected tab. Ask browser-specific requests such as "open the connected website orders page" or "use the website UI to create an order".
+No browser extension is required. Playwright opens a separate persistent browser profile, preserving the chat tab and retaining customer-app login state between runs. Ask browser-specific requests such as "open the connected website orders page" or "use the website UI to create an order".
+
+When navigation reaches a sign-in page, the runtime pauses and returns a **Continue after sign-in** interaction to chat. The user signs in directly in the managed browser, including SSO, MFA, or OTP. Continuing retries the original URL, verifies that authentication succeeded, and keeps the resulting session in the persistent profile.
 
 ## Why This Shape
 

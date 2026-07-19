@@ -1,14 +1,27 @@
 import http from 'node:http'
 
 import { readConfig } from './config.js'
-import { resolvePendingWrite, runAgent, shutdownAgents, type RunAgentInput } from './agent-runtime.js'
+import {
+  clearCustomerConnections,
+  connectCustomerApp,
+  disconnectCustomerApp,
+  getCustomerConnection,
+} from './connections/customer-connections.js'
+import { releaseCustomerConnection, resolvePendingAction, runAgent, shutdownAgents } from './agent-runtime.js'
+import type { RunAgentInput } from './runtime/types.js'
 import { inspectMcpServers } from './tools/mcp-clients.js'
 
 const config = readConfig([])
 const port = Number(process.env.STRANDS_AGENT_PORT ?? 8787)
+const host = process.env.STRANDS_AGENT_HOST ?? '127.0.0.1'
 
 const server = http.createServer(async (req, res) => {
-  setCorsHeaders(res)
+  if (!isAllowedOrigin(req.headers.origin)) {
+    sendJson(res, 403, { error: 'This origin is not allowed to call the local agent.' })
+    return
+  }
+
+  setCorsHeaders(req, res)
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204)
@@ -37,6 +50,40 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
+  if (req.method === 'POST' && req.url === '/connections/customer') {
+    try {
+      const body = await readJson<{ baseUrl?: string; loginUrl?: string; bearerToken?: string }>(req)
+      const connection = await connectCustomerApp({
+        baseUrl: body.baseUrl ?? '',
+        loginUrl: body.loginUrl,
+        bearerToken: body.bearerToken ?? '',
+      })
+      sendJson(res, 200, {
+        ok: true,
+        connectionId: connection.id,
+        baseUrl: connection.baseUrl,
+        loginUrl: connection.loginUrl,
+        appName: connection.discovery.appName,
+        appDescription: connection.discovery.appDescription,
+        tools: connection.discovery.tools,
+      })
+    } catch (err) {
+      sendJson(res, 400, { ok: false, error: err instanceof Error ? err.message : 'Customer app connection failed' })
+    }
+    return
+  }
+
+  if (req.method === 'POST' && req.url === '/connections/customer/disconnect') {
+    const body = await readJson<{ connectionId?: string }>(req)
+    const disconnected = body.connectionId ? disconnectCustomerApp(body.connectionId) : false
+    if (disconnected && body.connectionId) releaseCustomerConnection(body.connectionId)
+    sendJson(res, 200, {
+      ok: true,
+      disconnected,
+    })
+    return
+  }
+
   if (req.method === 'POST' && req.url === '/chat') {
     try {
       const startedAt = Date.now()
@@ -46,7 +93,7 @@ const server = http.createServer(async (req, res) => {
         return
       }
 
-      const result = await runAgent(config, body)
+      const result = await runAgent(config, resolveCustomerConnection(body))
       logTiming('chat', startedAt, body.message)
       sendJson(res, 200, result)
     } catch (err) {
@@ -65,11 +112,15 @@ const server = http.createServer(async (req, res) => {
         webmcpBearerToken?: string
         webmcpAuthHeader?: string
         webmcpAuthValue?: string
+        customerConnectionId?: string
       }>(req)
-      const result = await resolvePendingWrite({
+      const connection = body.customerConnectionId
+        ? getCustomerConnection(body.customerConnectionId)
+        : undefined
+      const result = await resolvePendingAction({
         conversationId: body.conversationId ?? 'default',
         approved: Boolean(body.approved),
-        webmcpBearerToken: body.webmcpBearerToken,
+        webmcpBearerToken: connection?.bearerToken ?? body.webmcpBearerToken,
         webmcpAuthHeader: body.webmcpAuthHeader,
         webmcpAuthValue: body.webmcpAuthValue,
       })
@@ -158,11 +209,22 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
+  if (req.method === 'POST' && req.url === '/shutdown') {
+    if (!isLoopback(req.socket.remoteAddress)) {
+      sendJson(res, 403, { ok: false, error: 'Shutdown is only available from the local machine.' })
+      return
+    }
+
+    sendJson(res, 200, { ok: true })
+    setTimeout(() => void shutdown(), 0)
+    return
+  }
+
   sendJson(res, 404, { error: 'Not found' })
 })
 
-server.listen(port, () => {
-  console.log(`Strands local agent listening on http://localhost:${port}`)
+server.listen(port, host, () => {
+  console.log(`Strands local agent listening on http://${host}:${port}`)
 })
 
 process.on('SIGINT', shutdown)
@@ -170,13 +232,48 @@ process.on('SIGTERM', shutdown)
 
 async function shutdown() {
   await shutdownAgents()
+  clearCustomerConnections()
   server.close(() => process.exit(0))
 }
 
-function setCorsHeaders(res: http.ServerResponse) {
-  res.setHeader('Access-Control-Allow-Origin', process.env.STRANDS_AGENT_CORS_ORIGIN ?? '*')
+function resolveCustomerConnection(input: RunAgentInput): RunAgentInput {
+  if (!input.customerConnectionId) return input
+  const connection = getCustomerConnection(input.customerConnectionId)
+  return {
+    ...input,
+    webmcpBaseUrl: connection.baseUrl,
+    webmcpLoginUrl: connection.loginUrl,
+    browserStartUrl: connection.loginUrl ?? connection.baseUrl,
+    webmcpBearerToken: connection.bearerToken,
+    allowWebMcpWrites: false,
+  }
+}
+
+function isLoopback(address: string | undefined): boolean {
+  return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1'
+}
+
+function setCorsHeaders(req: http.IncomingMessage, res: http.ServerResponse) {
+  const origin = req.headers.origin
+  if (origin) res.setHeader('Access-Control-Allow-Origin', origin)
+  res.setHeader('Vary', 'Origin')
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+}
+
+function isAllowedOrigin(origin: string | undefined): boolean {
+  if (!origin) return true
+  const configured = process.env.STRANDS_AGENT_CORS_ORIGIN
+  if (configured === '*') return true
+
+  const allowed = new Set(
+    (configured
+      ? configured.split(',')
+      : ['http://localhost:5173', 'http://127.0.0.1:5173'])
+      .map((value) => value.trim().replace(/\/$/, ''))
+      .filter(Boolean),
+  )
+  return allowed.has(origin.replace(/\/$/, ''))
 }
 
 function sendJson(res: http.ServerResponse, status: number, value: unknown) {

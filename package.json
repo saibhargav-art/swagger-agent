@@ -12,10 +12,13 @@
     "agent:restart": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restart-agent.ps1",
     "agent:restart:bg": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restart-agent.ps1 -Background",
     "agent:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restart-agent.ps1 -StopOnly",
-    "agent:check": "tsc -p local-agent/tsconfig.json --noEmit"
+    "agent:check": "tsc -p local-agent/tsconfig.json --noEmit",
+    "agent:test:browser-session": "tsx --tsconfig local-agent/tsconfig.json scripts/test-browser-session.ts",
+    "smoke:connections": "node scripts/smoke-connections.mjs"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@playwright/mcp": "0.0.78",
     "@strands-agents/sdk": "^1.7.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.441.0",
@@ -34,6 +37,7 @@
     "@vitejs/plugin-react": "^6.0.3",
     "autoprefixer": "^10.4.20",
     "postcss": "^8.4.44",
+    "playwright": "1.62.0-alpha-1783623505000",
     "tailwindcss": "^3.4.11",
     "tsx": "^4.23.0",
     "typescript": "^5.5.4",

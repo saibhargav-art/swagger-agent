@@ -2,9 +2,11 @@ import { useState } from 'react';
 import { Search, RefreshCw } from 'lucide-react';
 import { Input } from '@/components/ui/Input';
 import { Button } from '@/components/ui/Button';
-import { ScrollArea } from '@/components/ui/index';
+import { ScrollArea } from '@/components/ui/ScrollArea';
 import ToolCard from './ToolCard';
 import type { Tool } from '@/types/tool';
+
+const TOOL_RENDER_LIMIT = 100;
 
 interface Props {
   tools: Tool[];
@@ -24,9 +26,7 @@ export default function ToolExplorer({
   onReload,
 }: Props) {
   const [query, setQuery] = useState('');
-  const [roleFilter, setRoleFilter] = useState('');
-
-  const allRoles = [...new Set(tools.flatMap((t) => t.requiredRoles))].sort();
+  const [behaviorFilter, setBehaviorFilter] = useState('');
 
   const filtered = tools.filter((t) => {
     const matchesQuery =
@@ -34,11 +34,13 @@ export default function ToolExplorer({
       t.name.toLowerCase().includes(query.toLowerCase()) ||
       t.description.toLowerCase().includes(query.toLowerCase());
 
-    const matchesRole =
-      !roleFilter || t.requiredRoles.includes(roleFilter);
+    const matchesBehavior = !behaviorFilter
+      || (behaviorFilter === 'read' && t.annotations.readOnly)
+      || (behaviorFilter === 'write' && !t.annotations.readOnly);
 
-    return matchesQuery && matchesRole;
+    return matchesQuery && matchesBehavior;
   });
+  const visibleTools = filtered.slice(0, TOOL_RENDER_LIMIT);
 
   return (
     <div className="flex flex-col h-full">
@@ -50,31 +52,28 @@ export default function ToolExplorer({
             className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
           />
           <Input
-            placeholder="Search tools…"
+            placeholder="Search tools..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             className="pl-8 h-8 text-xs"
           />
         </div>
 
-        {allRoles.length > 0 && (
-          <select
-            value={roleFilter}
-            onChange={(e) => setRoleFilter(e.target.value)}
-            className="w-full h-7 rounded-md border border-slate-300 bg-white px-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
-          >
-            <option value="">All roles</option>
-            {allRoles.map((r) => (
-              <option key={r} value={r}>{r}</option>
-            ))}
-          </select>
-        )}
+        <select
+          value={behaviorFilter}
+          onChange={(e) => setBehaviorFilter(e.target.value)}
+          className="h-8 w-full rounded-md border border-slate-300 bg-white px-2 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500"
+        >
+          <option value="">All actions</option>
+          <option value="read">Read-only</option>
+          <option value="write">Changes data</option>
+        </select>
       </div>
 
       {/* Tool list */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-slate-200">
         <span className="text-xs text-slate-500">
-          {isLoading ? 'Loading…' : `${filtered.length} of ${tools.length} tools`}
+          {isLoading ? 'Loading...' : `${filtered.length} of ${tools.length} tools`}
         </span>
         <Button
           variant="ghost"
@@ -105,7 +104,12 @@ export default function ToolExplorer({
           </p>
         ) : (
           <div className="space-y-1.5">
-            {filtered.map((tool) => (
+            {filtered.length > TOOL_RENDER_LIMIT ? (
+              <p className="px-2 py-1 text-xs text-slate-500">
+                Showing the first {TOOL_RENDER_LIMIT} matches. Refine your search to find another tool.
+              </p>
+            ) : null}
+            {visibleTools.map((tool) => (
               <ToolCard
                 key={tool.id}
                 tool={tool}

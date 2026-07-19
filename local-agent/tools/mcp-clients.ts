@@ -1,32 +1,75 @@
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
 import { McpClient } from '@strands-agents/sdk'
 import type { JSONValue } from '@strands-agents/sdk'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 import type { LocalAgentConfig } from '../config.js'
 
+export type BrowserMcpConfig = Pick<
+  LocalAgentConfig,
+  'browserMcpEnabled' | 'browserMcpCommand' | 'browserMcpArgs'
+>
+
 export type McpServerDiagnostic = {
   name: string
   enabled: boolean
   configured: boolean
   connected: boolean
-  browserSessionConnected?: boolean
-  browserSessionError?: string
   tools: string[]
   error?: string
 }
 
-export function createMcpClients(config: LocalAgentConfig): McpClient[] {
-  const clients: McpClient[] = []
+type ManagedMcpClient = {
+  client: McpClient
+}
+
+type BrowserNavigationResult = {
+  toolName: string
+  result: JSONValue
+  openedInNewTab: boolean
+  managedBrowser: boolean
+  pageUrl?: string
+}
+
+const BROWSER_AGENT_TOOLS = new Set([
+  'browser_navigate',
+  'browser_navigate_back',
+  'browser_tabs',
+  'browser_snapshot',
+  'browser_click',
+  'browser_type',
+  'browser_fill_form',
+  'browser_select_option',
+  'browser_press_key',
+  'browser_wait_for',
+  'browser_handle_dialog',
+  'browser_file_upload',
+  'browser_take_screenshot',
+  'browser_hover',
+  'browser_drag',
+])
+
+// MCP subprocesses are server-scoped. Health checks and agent calls reuse the
+// same client instead of launching a browser runtime for every request.
+const managedClients = new Map<string, ManagedMcpClient>()
+
+export async function createMcpTools(config: LocalAgentConfig) {
+  const tools = []
 
   if (config.browserMcpEnabled && config.browserMcpCommand) {
-    clients.push(createStdioClient('browser-mcp', config.browserMcpCommand, config.browserMcpArgs))
+    const client = getManagedClient('browser-mcp', config.browserMcpCommand, config.browserMcpArgs)
+    const browserTools = await client.listTools()
+    tools.push(...browserTools.filter((tool) => BROWSER_AGENT_TOOLS.has(tool.name)))
   }
 
   if (config.context7Enabled && config.context7Command) {
-    clients.push(createStdioClient('context7', config.context7Command, config.context7Args))
+    const client = getManagedClient('context7', config.context7Command, config.context7Args)
+    tools.push(...await client.listTools())
   }
 
-  return clients
+  return tools
 }
 
 export async function inspectMcpServers(config: LocalAgentConfig): Promise<McpServerDiagnostic[]> {
@@ -54,32 +97,88 @@ export async function inspectMcpServers(config: LocalAgentConfig): Promise<McpSe
 }
 
 export async function navigateWithBrowserMcp(
-  config: LocalAgentConfig,
+  config: BrowserMcpConfig,
   url: string,
-): Promise<{ toolName: string; result: JSONValue }> {
+  options: { protectedOrigin?: string } = {},
+): Promise<BrowserNavigationResult> {
   if (!config.browserMcpEnabled || !config.browserMcpCommand) {
-    throw new Error('Browser MCP is not configured.')
+    throw new Error('Browser automation is not configured.')
   }
 
-  const client = createStdioClient('browser-mcp', config.browserMcpCommand, config.browserMcpArgs)
   try {
-    const tools = await client.listTools()
-    const navigateTool = tools.find((tool) => tool.name === 'browser_navigate')
-      ?? tools.find((tool) => /navigate|open/i.test(tool.name))
+    const result = await performBrowserNavigation(config, url, options)
+    if (!isClosedBrowserSession(result.result)) return result
+  } catch (error) {
+    if (!isClosedBrowserSession(error)) throw error
+  }
 
-    if (!navigateTool) {
-      throw new Error(`Browser MCP connected but no navigation tool was found. Tools: ${tools.map((tool) => tool.name).join(', ')}`)
-    }
+  await resetManagedClient('browser-mcp')
+  return performBrowserNavigation(config, url, options)
+}
 
+async function performBrowserNavigation(
+  config: BrowserMcpConfig,
+  url: string,
+  options: { protectedOrigin?: string },
+): Promise<BrowserNavigationResult> {
+  const client = getManagedClient('browser-mcp', config.browserMcpCommand!, config.browserMcpArgs)
+  const tools = await client.listTools()
+  const navigateTool = tools.find((tool) => tool.name === 'browser_navigate')
+    ?? tools.find((tool) => /navigate|open/i.test(tool.name))
+  const tabsTool = tools.find((tool) => tool.name === 'browser_tabs')
+
+  if (isManagedPlaywright(config) && navigateTool) {
     const result = await client.callTool(navigateTool, { url } as Record<string, JSONValue>)
-    return { toolName: navigateTool.name, result }
-  } finally {
-    await client.disconnect().catch(() => undefined)
+    return {
+      toolName: navigateTool.name,
+      result,
+      openedInNewTab: false,
+      managedBrowser: true,
+      pageUrl: extractPageUrl(result) ?? undefined,
+    }
+  }
+
+  if (tabsTool) {
+    const result = await client.callTool(tabsTool, {
+      action: 'new',
+      url,
+    } as Record<string, JSONValue>)
+    return {
+      toolName: tabsTool.name,
+      result,
+      openedInNewTab: true,
+      managedBrowser: false,
+      pageUrl: extractPageUrl(result) ?? undefined,
+    }
+  }
+
+  if (options.protectedOrigin) {
+    const currentUrl = await readConnectedPageUrl(client, tools)
+    if (currentUrl && sameOrigin(currentUrl, options.protectedOrigin)) {
+      throw new Error(
+        'The browser provider is attached to the chat app tab. Navigation was stopped to keep the chat open. Use a provider with tab management or connect it to a separate customer-app tab.',
+      )
+    }
+  }
+
+  if (!navigateTool) {
+    throw new Error(`The browser provider has no navigation tool. Tools: ${tools.map((tool) => tool.name).join(', ')}`)
+  }
+
+  const result = await client.callTool(navigateTool, { url } as Record<string, JSONValue>)
+  return {
+    toolName: navigateTool.name,
+    result,
+    openedInNewTab: false,
+    managedBrowser: false,
+    pageUrl: extractPageUrl(result) ?? undefined,
   }
 }
 
-export async function disconnectMcpClients(clients: McpClient[]): Promise<void> {
-  await Promise.allSettled(clients.map((client) => client.disconnect()))
+export async function shutdownMcpClients(): Promise<void> {
+  const clients = [...managedClients.values()]
+  managedClients.clear()
+  await Promise.allSettled(clients.map((entry) => entry.client.disconnect()))
 }
 
 async function inspectServer({
@@ -108,20 +207,16 @@ async function inspectServer({
     }
   }
 
-  const client = createStdioClient(name, command, args)
+  const client = getManagedClient(name, command, args)
   try {
     const tools = await client.listTools()
     const toolNames = tools.map((tool) => tool.name)
-    const sessionCheck = name === 'browser-mcp'
-      ? await inspectBrowserSession(client, tools)
-      : {}
 
     return {
       name,
       enabled,
       configured: true,
       connected: client.connectionState === 'connected',
-      ...sessionCheck,
       tools: toolNames,
     }
   } catch (err) {
@@ -132,34 +227,6 @@ async function inspectServer({
       connected: false,
       tools: [],
       error: err instanceof Error ? err.message : String(err),
-    }
-  } finally {
-    await client.disconnect().catch(() => undefined)
-  }
-}
-
-async function inspectBrowserSession(
-  client: McpClient,
-  tools: Awaited<ReturnType<McpClient['listTools']>>,
-): Promise<Pick<McpServerDiagnostic, 'browserSessionConnected' | 'browserSessionError'>> {
-  const snapshotTool = tools.find((tool) => tool.name === 'browser_snapshot')
-  if (!snapshotTool) return {}
-
-  try {
-    const result = await client.callTool(snapshotTool, {})
-    const isError = Boolean(result && typeof result === 'object' && !Array.isArray(result) && (result as { isError?: unknown }).isError)
-    if (isError) {
-      return {
-        browserSessionConnected: false,
-        browserSessionError: extractMcpText(result),
-      }
-    }
-
-    return { browserSessionConnected: true }
-  } catch (err) {
-    return {
-      browserSessionConnected: false,
-      browserSessionError: err instanceof Error ? err.message : String(err),
     }
   }
 }
@@ -179,11 +246,80 @@ function extractMcpText(result: unknown): string {
     .join(' ')
 }
 
+async function readConnectedPageUrl(
+  client: McpClient,
+  tools: Awaited<ReturnType<McpClient['listTools']>>,
+): Promise<string | null> {
+  const snapshotTool = tools.find((tool) => tool.name === 'browser_snapshot')
+  if (!snapshotTool) return null
+
+  const snapshot = await client.callTool(snapshotTool, {})
+  return extractPageUrl(snapshot)
+}
+
+function extractPageUrl(result: unknown): string | null {
+  return extractMcpText(result).match(/-\s*Page URL:\s*(\S+)/i)?.[1] ?? null
+}
+
+function isClosedBrowserSession(value: unknown): boolean {
+  const message = value instanceof Error
+    ? value.message
+    : typeof value === 'string'
+      ? value
+      : extractMcpText(value) || JSON.stringify(value)
+
+  return /(?:target page|browser context|browser|page|context).*(?:has been closed|is closed|was closed)|(?:connection|transport).*(?:closed|ended)/i.test(message)
+}
+
+function sameOrigin(left: string, right: string): boolean {
+  try {
+    return new URL(left).origin === new URL(right).origin
+  } catch {
+    return false
+  }
+}
+
+function isManagedPlaywright(config: BrowserMcpConfig): boolean {
+  return config.browserMcpArgs.some((arg) => arg.includes('@playwright/mcp') || arg === '--user-data-dir')
+}
+
 function createStdioClient(name: string, command: string, args: string[]): McpClient {
+  const runtimeArgs = name === 'browser-mcp' ? normalizeBrowserArgs(args) : args
   return new McpClient({
     applicationName: `swagger-agent-${name}`,
     applicationVersion: '0.1.0',
     continueOnError: true,
-    transport: new StdioClientTransport({ command, args }),
+    transport: new StdioClientTransport({ command, args: runtimeArgs }),
   })
+}
+
+function normalizeBrowserArgs(args: string[]): string[] {
+  if (!args.some((arg) => arg.includes('@playwright/mcp'))) return args
+
+  const normalized = [...args]
+  const runtimeHome = join(homedir(), '.swagger-agent')
+  if (!normalized.includes('--browser')) normalized.push('--browser', 'chrome')
+  if (!normalized.includes('--user-data-dir') && !normalized.includes('--isolated') && !normalized.includes('--extension')) {
+    normalized.push('--user-data-dir', join(runtimeHome, 'playwright-profile'))
+  }
+  if (!normalized.includes('--output-dir')) normalized.push('--output-dir', join(runtimeHome, 'playwright-output'))
+  return normalized
+}
+
+function getManagedClient(name: string, command: string, args: string[]): McpClient {
+  const existing = managedClients.get(name)
+
+  if (existing && existing.client.connectionState !== 'failed') {
+    return existing.client
+  }
+
+  const client = createStdioClient(name, command, args)
+  managedClients.set(name, { client })
+  return client
+}
+
+async function resetManagedClient(name: string): Promise<void> {
+  const existing = managedClients.get(name)
+  managedClients.delete(name)
+  if (existing) await existing.client.disconnect().catch(() => undefined)
 }

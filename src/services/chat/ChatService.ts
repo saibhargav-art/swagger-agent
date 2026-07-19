@@ -8,64 +8,60 @@ export class ChatService {
     const conversation = conversations.find((item) => item.id === conversationId);
     if (!conversation) return;
 
-    const assistantMsgId = generateId();
+    const assistantMessageId = generateId();
     addMessage(conversationId, {
-      id: assistantMsgId,
+      id: assistantMessageId,
       role: 'assistant',
       content: '',
       timestamp: Date.now(),
       isStreaming: true,
     });
-
     setStreaming(true);
 
     try {
       for await (const event of strandsLocalRuntime.send({ conversationId, message: userContent })) {
         if (event.type === 'text') {
-          updateMessage(conversationId, assistantMsgId, {
+          updateMessage(conversationId, assistantMessageId, {
             content: event.text,
             runtimeConfirmation: undefined,
             isStreaming: false,
           });
         }
-
         if (event.type === 'confirmation-required') {
-          updateMessage(conversationId, assistantMsgId, {
+          updateMessage(conversationId, assistantMessageId, {
             runtimeConfirmation: {
               runId: event.runId,
               title: event.title,
               details: event.details,
+              kind: event.kind,
+              confirmLabel: event.confirmLabel,
+              cancelLabel: event.cancelLabel,
             },
             isStreaming: false,
           });
         }
-
         if (event.type === 'trace') {
-          updateMessage(conversationId, assistantMsgId, {
-            runtimeTrace: event.steps,
-          });
+          updateMessage(conversationId, assistantMessageId, { runtimeTrace: event.steps });
         }
-
         if (event.type === 'error') {
-          updateMessage(conversationId, assistantMsgId, {
-            content: `Local Strands agent error: ${event.message}`,
+          updateMessage(conversationId, assistantMessageId, {
+            content: `Local agent error: ${event.message}`,
             runtimeConfirmation: undefined,
             isStreaming: false,
           });
         }
       }
-    } catch (err) {
-      updateMessage(conversationId, assistantMsgId, {
-        content:
-          err instanceof TypeError
-            ? 'Local Strands agent is not running. Start it with `npm run agent:server`, then try again.'
-            : `Local Strands agent error: ${err instanceof Error ? err.message : 'Unknown error'}`,
+    } catch (error) {
+      updateMessage(conversationId, assistantMessageId, {
+        content: error instanceof TypeError
+          ? 'The local agent is unavailable. Start it with `npm run agent:server`, then try again.'
+          : `Local agent error: ${error instanceof Error ? error.message : 'Unknown error'}`,
         runtimeConfirmation: undefined,
         isStreaming: false,
       });
     } finally {
       setStreaming(false);
-      updateMessage(conversationId, assistantMsgId, { isStreaming: false });
+      updateMessage(conversationId, assistantMessageId, { isStreaming: false });
     }
   }
 }

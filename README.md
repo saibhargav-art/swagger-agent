@@ -6,7 +6,8 @@ The app connects to:
 
 - a local Strands agent service that owns model/tool orchestration
 - a customer website that hosts `/webapi.json`
-- an authenticated customer user session, passed as bearer token or browser session cookies
+- an authenticated customer API session, passed as a bearer token
+- a separate persistent Playwright browser session for visible customer pages
 
 The customer backend remains the source of truth for login, roles, scopes, and permissions.
 
@@ -42,28 +43,29 @@ With a customer website connected by `/webapi.json`:
 WEBMCP_BASE_URL=http://localhost:5173 WEBMCP_BEARER_TOKEN=<token> npm run agent:poc -- "search orders for vijay"
 ```
 
-The Strands runtime loads WebMCP tools, can attach Browser MCP, and lets the model choose tools and parameters. Runtime policy still blocks write actions unless `ALLOW_WEBMCP_WRITES=true` is set.
+The Strands runtime loads WebMCP tools, can attach Playwright MCP for a separate persistent browser, and lets the model choose tools and parameters. Runtime policy still blocks write actions unless `ALLOW_WEBMCP_WRITES=true` is set.
 
 To route the React chat through the local Strands HTTP service:
 
 ```bash
 npm run agent:server
-VITE_STRANDS_AGENT_URL=http://localhost:8787 npm run dev
+VITE_STRANDS_AGENT_URL=http://127.0.0.1:8787 npm run dev
 ```
 
-Select Ollama/OpenAI/Bedrock from the Connections page. The browser sends only the selected model settings to the local Strands service per request.
+Select Ollama/OpenAI/Bedrock from the Connections page. Customer credentials are sent once to the loopback-only local service; chat requests use an opaque local connection ID.
 
 ## Connection Flow
 
 1. Open `Connections`.
-2. Configure and test the local Strands agent.
-3. Enter the customer login URL and sign in.
-4. Enter the website URL that hosts `/webapi.json`.
-5. Choose auth mode:
-   - `Bearer token`: paste the logged-in user's access token.
-   - `Browser session`: send cookies with tool calls. The customer backend must allow CORS credentials.
-6. Connect the website and verify discovered tools.
-7. Use chat for actions such as creating an order or checking order status.
+2. Select the local model provider and model. Ollama runs locally; OpenAI needs an API key; Bedrock uses the local AWS environment.
+3. Enter the customer app URL that publishes `/webapi.json`.
+4. Paste the logged-in customer's access token and select **Connect all**.
+5. Verify the discovered tools, then use chat for customer-app actions.
+
+Service URLs, an optional customer sign-in route, and managed-browser settings live under **Advanced settings**. They normally keep their defaults.
+The managed browser starts lazily on the first browser-only request, so connecting the local agent does not open an empty browser window.
+
+For browser-only pages, Playwright uses a separate persistent profile. If the customer app redirects to sign-in, complete login in that managed browser and select **Continue after sign-in** in chat. The agent verifies the session and resumes the originally requested page. Passwords, MFA codes, and OTPs never pass through the chat app.
 
 ## Customer Contract
 
@@ -83,13 +85,12 @@ Minimum `webapi.json` shape:
       "url": "https://api.customer.com"
     }
   ],
+  "security": [{ "bearerAuth": [] }],
   "paths": {
     "/action-name": {
       "post": {
         "operationId": "performAction",
         "summary": "Perform an app action",
-        "x-webmcp-scopes": ["scope:write"],
-        "x-webmcp-roles": ["member", "admin"],
         "requestBody": {
           "required": true,
           "content": {
@@ -103,7 +104,18 @@ Minimum `webapi.json` shape:
               }
             }
           }
+        },
+        "responses": {
+          "200": { "description": "Action completed" }
         }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer"
       }
     }
   }
@@ -117,24 +129,27 @@ Minimum `webapi.json` shape:
 ```txt
 src/
   components/
-    activity/
     chat/
+    connections/
     layout/
     tools/
     ui/
-  context/
   hooks/
   pages/
     ChatPage/
     ConnectionsPage/
   services/
-    ai/
+    chat/
+    connections/
     runtime/
-    webmcp/
   store/
   types/
   utils/
-  webmcp/
+local-agent/
+  connections/
+  models/
+  runtime/
+  tools/
 ```
 
 ## Tool Execution UX
@@ -147,7 +162,7 @@ The local Strands agent decides which tools to call and what parameters to use. 
 
 ## Security Model
 
-The chat app verifies that `/webapi.json` can be loaded and forwards auth to the tool backend.
+The local agent loads `/webapi.json`, keeps the customer token in memory, and forwards it only to the declared tool backend. The static contract describes capabilities; it is not an authorization authority.
 
 The customer backend must verify every tool call:
 

@@ -1,4 +1,6 @@
 import type { AgentRuntime, AgentRuntimeEvent, AgentRuntimeRequest } from './AgentRuntime'
+import { connectCustomerApp } from '@/services/connections/ConnectionService'
+import { useToolStore } from '@/store/toolStore'
 import { useWebMCPStore } from '@/store/webMCPStore'
 import { useAgentRuntimeStore } from '@/store/agentRuntimeStore'
 
@@ -11,11 +13,15 @@ type StrandsResponse = {
     input?: unknown
     result?: unknown
     ok: boolean
+    status?: 'success' | 'error' | 'attention'
   }>
   confirmationRequired?: {
     runId: string
     title: string
     details: Record<string, unknown>
+    kind?: 'write' | 'browser-login'
+    confirmLabel?: string
+    cancelLabel?: string
   }
 }
 
@@ -27,15 +33,16 @@ export class StrandsLocalRuntime implements AgentRuntime {
     const runtime = useAgentRuntimeStore.getState()
     const baseUrl = runtime.agentUrl || 'http://localhost:8787'
 
-    yield { type: 'text', text: 'Thinking with local Strands agent...' }
-
-    const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(buildRequestPayload(request, connection, runtime)),
-    })
-
-    const payload = await response.json() as StrandsResponse
+    let { response, payload } = await postChat(baseUrl, request, connection, runtime)
+    if ((!response.ok || payload.error) && isStaleCustomerConnection(payload.error)) {
+      await restoreCustomerConnection(runtime.agentUrl)
+      ;({ response, payload } = await postChat(
+        baseUrl,
+        request,
+        useWebMCPStore.getState(),
+        useAgentRuntimeStore.getState(),
+      ))
+    }
     if (!response.ok || payload.error) {
       yield {
         type: 'error',
@@ -54,21 +61,13 @@ export class StrandsLocalRuntime implements AgentRuntime {
         runId: payload.confirmationRequired.runId,
         title: payload.confirmationRequired.title,
         details: payload.confirmationRequired.details,
+        kind: payload.confirmationRequired.kind,
+        confirmLabel: payload.confirmationRequired.confirmLabel,
+        cancelLabel: payload.confirmationRequired.cancelLabel,
       }
     }
     yield { type: 'done' }
   }
-
-  async approve(runId: string): Promise<void> {
-    await this.resolveConfirmation(runId, true)
-  }
-
-  async reject(runId: string): Promise<void> {
-    await this.resolveConfirmation(runId, false)
-  }
-
-  async choose(): Promise<void> {}
-  async cancel(): Promise<void> {}
 
   async confirm(runId: string, approved: boolean): Promise<StrandsResponse> {
     return this.resolveConfirmation(runId, approved)
@@ -84,11 +83,11 @@ export class StrandsLocalRuntime implements AgentRuntime {
       body: JSON.stringify({
         conversationId: runId,
         approved,
-        webmcpBearerToken: connection.authMode === 'bearer' ? connection.bearerToken : undefined,
+        customerConnectionId: connection.connectionId || undefined,
       }),
     })
 
-    const payload = await response.json() as StrandsResponse
+    const payload = await readResponse(response)
     if (!response.ok || payload.error) {
       throw new Error(payload.error ?? `Local Strands agent failed with HTTP ${response.status}`)
     }
@@ -126,11 +125,8 @@ function buildRequestPayload(
     context7Enabled: runtime.context7Enabled,
     context7Command: runtime.context7Enabled ? runtime.context7Command || undefined : undefined,
     context7Args: runtime.context7Enabled ? parseArgs(runtime.context7Args) : [],
-    webmcpBaseUrl: connection.baseUrl,
-    webmcpLoginUrl: connection.loginUrl || undefined,
-    browserStartUrl: connection.loginUrl || connection.baseUrl || undefined,
-    webmcpBearerToken: connection.authMode === 'bearer' ? connection.bearerToken : undefined,
-    allowWebMcpWrites: import.meta.env.VITE_ALLOW_WEBMCP_WRITES === 'true',
+    customerConnectionId: connection.connectionId || undefined,
+    chatAppUrl: typeof window !== 'undefined' ? window.location.origin : undefined,
   }
 }
 
@@ -146,4 +142,67 @@ function parseArgs(value: string): string[] {
   }
 
   return trimmed.match(/(?:[^\s"]+|"[^"]*")+/g)?.map((part) => part.replace(/^"|"$/g, '')) ?? []
+}
+
+async function postChat(
+  baseUrl: string,
+  request: AgentRuntimeRequest,
+  connection: ReturnType<typeof useWebMCPStore.getState>,
+  runtime: ReturnType<typeof useAgentRuntimeStore.getState>,
+): Promise<{ response: Response; payload: StrandsResponse }> {
+  const response = await fetch(`${baseUrl.replace(/\/$/, '')}/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(buildRequestPayload(request, connection, runtime)),
+  })
+  return { response, payload: await readResponse(response) }
+}
+
+function isStaleCustomerConnection(error: string | undefined): boolean {
+  return Boolean(error && /customer connection is no longer available|reconnect the customer app/i.test(error))
+}
+
+async function restoreCustomerConnection(agentUrl: string): Promise<void> {
+  const connection = useWebMCPStore.getState()
+  if (!connection.baseUrl || !connection.bearerToken) {
+    throw new Error('The customer session is unavailable. Reconnect the customer app.')
+  }
+
+  connection.setStatus('connecting')
+  try {
+    const result = await connectCustomerApp({
+      agentUrl,
+      baseUrl: connection.baseUrl,
+      loginUrl: connection.loginUrl,
+      bearerToken: connection.bearerToken,
+    })
+    connection.setConnectionId(result.connectionId)
+    connection.setToolCount(result.tools.length)
+    connection.setAppInfo({ name: result.appName, description: result.appDescription })
+    connection.setStatus('connected')
+    connection.setError(null)
+    useToolStore.getState().setTools(result.tools)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Could not reconnect the customer app.'
+    connection.setConnectionId('')
+    connection.setStatus('error')
+    connection.setError(message)
+    useToolStore.getState().setTools([])
+    throw error
+  }
+}
+
+async function readResponse(response: Response): Promise<StrandsResponse> {
+  const text = await response.text()
+  if (!text) return {}
+
+  try {
+    return JSON.parse(text) as StrandsResponse
+  } catch {
+    return {
+      error: response.ok
+        ? 'The local agent returned an invalid response.'
+        : `The local agent failed with HTTP ${response.status}.`,
+    }
+  }
 }

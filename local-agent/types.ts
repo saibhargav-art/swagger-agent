@@ -8,6 +8,7 @@ export type OpenApiDocument = {
   info?: {
     title?: string
     version?: string
+    description?: string
   }
   servers?: Array<{ url?: string }>
   paths?: Record<string, Record<string, OpenApiOperation | unknown>>
@@ -28,11 +29,11 @@ export type OpenApiOperation = {
   }
   responses?: Record<string, unknown>
   security?: Array<Record<string, string[]>>
-  'x-webmcp-scopes'?: string[]
-  'x-webmcp-roles'?: string[]
   'x-webmcp-headers'?: Record<string, string>
-  'x-webmcp-intent'?: string
-  'x-webmcp-requires-confirmation'?: boolean
+  'x-webmcp'?: {
+    readOnlyHint?: boolean
+    destructiveHint?: boolean
+  }
 }
 
 export type OpenApiParameter = {
@@ -55,8 +56,6 @@ export type WebMcpOperation = {
   requestBodyFields: Set<string>
   parameters: OpenApiParameter[]
   staticHeaders: Record<string, string>
-  scopes: string[]
-  roles: string[]
-  intent?: string
-  requiresConfirmation?: boolean
+  readOnlyHint?: boolean
+  destructiveHint?: boolean
 }

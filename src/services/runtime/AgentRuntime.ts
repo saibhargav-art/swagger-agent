@@ -11,6 +11,7 @@ export type AgentRuntimeTraceStep = {
   input?: unknown
   result?: unknown
   ok: boolean
+  status?: 'success' | 'error' | 'attention'
 }
 
 export type AgentRuntimeEvent =
@@ -19,36 +20,17 @@ export type AgentRuntimeEvent =
       text: string
     }
   | {
-      type: 'tool-start'
-      toolName: string
-      title?: string
-    }
-  | {
-      type: 'tool-result'
-      toolName: string
-      title?: string
-      result: unknown
-    }
-  | {
       type: 'confirmation-required'
       runId: string
       title: string
       details: Record<string, unknown>
+      kind?: 'write' | 'browser-login'
+      confirmLabel?: string
+      cancelLabel?: string
     }
   | {
       type: 'trace'
       steps: AgentRuntimeTraceStep[]
-    }
-  | {
-      type: 'choice-required'
-      runId: string
-      title: string
-      options: Array<{
-        id: string
-        label: string
-        description?: string
-        value: unknown
-      }>
     }
   | {
       type: 'done'
@@ -61,8 +43,4 @@ export type AgentRuntimeEvent =
 export interface AgentRuntime {
   readonly kind: AgentRuntimeKind
   send(request: AgentRuntimeRequest): AsyncIterable<AgentRuntimeEvent>
-  approve(runId: string): Promise<void>
-  reject(runId: string): Promise<void>
-  choose(runId: string, optionId: string): Promise<void>
-  cancel(runId: string): Promise<void>
 }

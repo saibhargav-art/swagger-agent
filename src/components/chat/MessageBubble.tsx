@@ -1,11 +1,12 @@
 import { useState } from 'react';
-import { Bot, CheckCircle, ChevronDown, ChevronRight, Loader2, User, Wrench, XCircle } from 'lucide-react';
+import { AlertCircle, Bot, CheckCircle, ChevronDown, ChevronRight, Loader2, User, Wrench, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { AgentText } from './AgentText';
 import { strandsLocalRuntime } from '@/services/runtime';
 import { useChatStore } from '@/store/chatStore';
 import { cn } from '@/utils/cn';
-import { formatDuration, formatTime } from '@/utils/format';
-import type { Message, RuntimeConfirmation, RuntimeTraceStep, ToolCall } from '@/types/chat';
+import { formatTime } from '@/utils/format';
+import type { Message, RuntimeConfirmation, RuntimeTraceStep } from '@/types/chat';
 
 interface Props {
   message: Message;
@@ -13,44 +14,46 @@ interface Props {
 
 export default function MessageBubble({ message }: Props) {
   const isUser = message.role === 'user';
-  const [cancelled, setCancelled] = useState(false);
-  const visibleContent = cancelled ? "Okay, I won't proceed with that request." : stripToolPayload(message.content);
+  const visibleContent = stripToolPayload(message.content);
+
+  if (!isUser && message.isStreaming && !visibleContent && !message.runtimeConfirmation && !message.runtimeTrace?.length) {
+    return null;
+  }
 
   return (
-    <div className={cn('flex gap-3', isUser && 'flex-row-reverse')}>
+    <div className={cn('flex min-w-0 gap-3', isUser && 'flex-row-reverse')}>
       <div
         className={cn(
-          'mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white',
-          isUser ? 'bg-indigo-600' : 'bg-slate-700',
+          'mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-white',
+          isUser ? 'bg-indigo-600' : 'bg-slate-900',
         )}
       >
         {isUser ? <User size={14} /> : <Bot size={14} />}
       </div>
 
-      <div className={cn('flex max-w-[88%] flex-col gap-2 sm:max-w-[78%]', isUser && 'items-end')}>
+      <div className={cn('flex min-w-0 max-w-[88%] flex-col gap-2 sm:max-w-[82%]', !isUser && 'w-full', isUser && 'items-end')}>
         {!isUser && message.runtimeConfirmation ? (
           <RuntimeConfirmationCard
             messageId={message.id}
             content={visibleContent}
             confirmation={message.runtimeConfirmation}
-            onCancel={() => setCancelled(true)}
           />
         ) : visibleContent ? (
-          <div
-            className={cn(
-              'whitespace-pre-wrap rounded-2xl px-4 py-3 text-sm leading-relaxed',
-              isUser ? 'rounded-tr-md bg-indigo-600 text-white' : 'rounded-tl-md bg-slate-100 text-slate-800',
-            )}
-          >
-            {visibleContent}
-          </div>
+          isUser ? (
+            <div className="whitespace-pre-wrap rounded-2xl rounded-tr-md bg-indigo-600 px-4 py-2.5 text-sm leading-6 text-white">
+              {visibleContent}
+            </div>
+          ) : (
+            <div className="pr-2 text-sm leading-6 text-slate-800">
+              <AgentText content={visibleContent} />
+            </div>
+          )
         ) : null}
 
-        {message.toolCall ? <ToolCallCard toolCall={message.toolCall} /> : null}
         {!isUser && message.runtimeTrace?.length ? <RuntimeTraceCard steps={message.runtimeTrace} /> : null}
 
-        {!visibleContent && !message.toolCall && !message.runtimeConfirmation && !message.isStreaming ? (
-          <div className="rounded-2xl rounded-tl-md bg-slate-100 px-4 py-3 text-sm text-slate-500">
+        {!visibleContent && !message.runtimeConfirmation && !message.isStreaming ? (
+          <div className="text-sm text-slate-500">
             I could not produce a usable response. Try again or check Connections.
           </div>
         ) : null}
@@ -65,12 +68,10 @@ function RuntimeConfirmationCard({
   messageId,
   content,
   confirmation,
-  onCancel,
 }: {
   messageId: string;
   content: string;
   confirmation: RuntimeConfirmation;
-  onCancel: () => void;
 }) {
   const { activeConversationId, updateMessage } = useChatStore();
   const [status, setStatus] = useState<'idle' | 'executing'>('idle');
@@ -89,10 +90,19 @@ function RuntimeConfirmationCard({
       updateMessage(activeConversationId, messageId, {
         content: result.content ?? (approved ? 'Action completed.' : 'Cancelled the pending action.'),
         runtimeTrace: result.trace,
-        runtimeConfirmation: undefined,
+        runtimeConfirmation: result.confirmationRequired
+          ? {
+              runId: result.confirmationRequired.runId,
+              title: result.confirmationRequired.title,
+              details: result.confirmationRequired.details,
+              kind: result.confirmationRequired.kind,
+              confirmLabel: result.confirmationRequired.confirmLabel,
+              cancelLabel: result.confirmationRequired.cancelLabel,
+            }
+          : undefined,
         isStreaming: false,
       });
-      if (!approved) onCancel();
+      if (result.confirmationRequired) setStatus('idle');
     } catch (err) {
       setStatus('idle');
       setError(err instanceof Error ? err.message : 'Could not resolve the pending action.');
@@ -100,14 +110,14 @@ function RuntimeConfirmationCard({
   };
 
   return (
-    <div className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-sm shadow-sm">
-      {content ? <div className="whitespace-pre-wrap leading-relaxed text-slate-800">{content}</div> : null}
+    <div className="w-full rounded-lg border border-slate-200 bg-white p-4 text-sm shadow-sm">
+      {content ? <div className="leading-6 text-slate-800"><AgentText content={content} /></div> : null}
       <div className="mt-3 border-t border-slate-100 pt-3">
         <div className="font-medium text-slate-900">{confirmation.title}</div>
         {rows.length ? (
-          <div className="mt-3 grid gap-2 rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <div className="mt-3 grid gap-2 rounded-md border border-slate-200 bg-slate-50 p-3">
             {rows.map(([key, value]) => (
-              <div key={key} className="grid grid-cols-[120px_1fr] gap-2 text-xs">
+              <div key={key} className="grid gap-0.5 text-xs sm:grid-cols-[120px_1fr] sm:gap-2">
                 <span className="font-medium text-slate-500">{humanizeFieldName(key)}</span>
                 <span className="break-words text-slate-900">{formatCell(value)}</span>
               </div>
@@ -117,11 +127,11 @@ function RuntimeConfirmationCard({
         {error ? <p className="mt-2 text-xs text-red-600">{error}</p> : null}
         <div className="mt-3 flex justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={() => finish(false)} disabled={status === 'executing'}>
-            Cancel
+            {confirmation.cancelLabel ?? 'Cancel'}
           </Button>
           <Button size="sm" onClick={() => finish(true)} disabled={status === 'executing'}>
             {status === 'executing' ? <Loader2 size={13} className="animate-spin" /> : null}
-            Confirm
+            {confirmation.confirmLabel ?? 'Confirm'}
           </Button>
         </div>
       </div>
@@ -133,9 +143,11 @@ function RuntimeTraceCard({ steps }: { steps: RuntimeTraceStep[] }) {
   const [open, setOpen] = useState(false);
   const visibleSteps = steps.filter((step) => step.type === 'tool');
   if (visibleSteps.length === 0) return null;
+  const hasError = visibleSteps.some((step) => (step.status ?? (step.ok ? 'success' : 'error')) === 'error');
+  const needsAttention = visibleSteps.some((step) => step.status === 'attention');
 
   return (
-    <div className="w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-sm shadow-sm">
+    <div className="w-full overflow-hidden rounded-lg border border-slate-200 bg-white text-sm">
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
@@ -147,16 +159,16 @@ function RuntimeTraceCard({ steps }: { steps: RuntimeTraceStep[] }) {
           {visibleSteps.length === 1 ? '1 tool action' : `${visibleSteps.length} tool actions`}
         </span>
         <span className="ml-auto text-xs text-slate-500">
-          {visibleSteps.every((step) => step.ok) ? 'Completed' : 'Needs attention'}
+          {hasError ? 'Needs attention' : needsAttention ? 'Sign-in required' : 'Completed'}
         </span>
       </button>
 
       {open ? (
         <div className="grid gap-3 px-3 py-3">
           {visibleSteps.map((step, index) => (
-            <div key={`${step.name}-${index}`} className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+            <div key={`${step.name}-${index}`} className="rounded-md border border-slate-200 bg-slate-50 p-3">
               <div className="flex items-center gap-2">
-                <StatusBadge status={step.ok ? 'success' : 'error'} />
+                <StatusBadge status={step.status ?? (step.ok ? 'success' : 'error')} />
                 <span className="font-mono text-xs font-medium text-slate-800">{step.name}</span>
               </div>
               {isDisplayable(step.input) ? (
@@ -179,53 +191,19 @@ function RuntimeTraceCard({ steps }: { steps: RuntimeTraceStep[] }) {
   );
 }
 
-function ToolCallCard({ toolCall }: { toolCall: ToolCall }) {
-  const { toolName, status, result, error, startedAt, completedAt } = toolCall;
-  const duration = completedAt ? completedAt - startedAt : undefined;
-
-  return (
-    <div className="w-full overflow-hidden rounded-2xl border border-slate-200 bg-white text-sm">
-      <div className="flex items-center gap-2 border-b border-slate-100 bg-slate-50 px-3 py-2">
-        <Wrench size={13} className="shrink-0 text-slate-500" />
-        <span className="font-mono text-xs font-medium text-slate-700">{toolName}</span>
-        <div className="ml-auto flex items-center gap-1.5">
-          <StatusBadge status={status} />
-          {duration !== undefined ? <span className="text-xs text-slate-400">{formatDuration(duration)}</span> : null}
-        </div>
-      </div>
-
-      <div className="px-3 py-2">
-        {status === 'executing' ? (
-          <div className="flex items-center gap-2 text-xs text-slate-600">
-            <Loader2 size={13} className="animate-spin" />
-            Executing {toolName}
-          </div>
-        ) : null}
-        {status === 'success' ? (
-          <div className="space-y-2">
-            <p className="text-xs font-medium text-emerald-700">Tool completed.</p>
-            <ResultPreview result={result} />
-          </div>
-        ) : null}
-        {status === 'error' && error ? <p className="text-xs text-red-600">{error}</p> : null}
-      </div>
-    </div>
-  );
-}
-
-function StatusBadge({ status }: { status: ToolCall['status'] }) {
+function StatusBadge({ status }: { status: 'success' | 'error' | 'attention' }) {
   const classes = {
-    pending: 'border-slate-200 bg-slate-50 text-slate-600',
-    executing: 'border-blue-200 bg-blue-50 text-blue-700',
     success: 'border-emerald-200 bg-emerald-50 text-emerald-700',
     error: 'border-red-200 bg-red-50 text-red-700',
+    attention: 'border-amber-200 bg-amber-50 text-amber-700',
   }[status];
 
   return (
     <span className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${classes}`}>
       {status === 'success' ? <CheckCircle size={12} /> : null}
       {status === 'error' ? <XCircle size={12} /> : null}
-      {status}
+      {status === 'attention' ? <AlertCircle size={12} /> : null}
+      {status === 'attention' ? 'sign-in' : status}
     </span>
   );
 }
@@ -235,7 +213,7 @@ function ResultPreview({ result }: { result: unknown }) {
 
   if (typeof result === 'string') {
     return (
-      <div className="mt-2 whitespace-pre-wrap rounded-xl border border-slate-200 bg-white p-3 text-xs text-slate-700">
+      <div className="mt-2 max-h-64 overflow-auto whitespace-pre-wrap rounded-md border border-slate-200 bg-white p-3 text-xs text-slate-700">
         {result}
       </div>
     );
@@ -248,7 +226,7 @@ function ResultPreview({ result }: { result: unknown }) {
     const visibleRows = records.slice(0, 20);
 
     return (
-      <div className="mt-2 overflow-hidden rounded-xl border border-slate-200 bg-white text-xs text-slate-700">
+      <div className="mt-2 overflow-hidden rounded-md border border-slate-200 bg-white text-xs text-slate-700">
         <div className="max-h-80 overflow-auto">
           <table className="min-w-full border-collapse">
             <thead className="sticky top-0 bg-slate-50 text-left text-[11px] uppercase tracking-wide text-slate-500">
@@ -282,9 +260,9 @@ function ResultPreview({ result }: { result: unknown }) {
   if (entries.length === 0) return null;
 
   return (
-    <div className="mt-2 grid gap-1 rounded-xl border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
+    <div className="mt-2 grid gap-1 rounded-md border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700">
       {entries.map(([key, value]) => (
-        <div key={key} className="grid grid-cols-[120px_1fr] gap-2">
+        <div key={key} className="grid gap-0.5 sm:grid-cols-[120px_1fr] sm:gap-2">
           <span className="font-medium text-slate-500">{humanizeFieldName(key)}</span>
           <span className="break-words text-slate-900">{formatCell(value)}</span>
         </div>

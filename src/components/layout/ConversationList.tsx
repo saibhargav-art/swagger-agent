@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Plus, MessageSquare, Trash2, Pencil, Check, X } from 'lucide-react';
 import { cn } from '@/utils/cn';
 import { Button } from '@/components/ui/Button';
-import { ScrollArea } from '@/components/ui/index';
+import { ScrollArea } from '@/components/ui/ScrollArea';
 import { formatDate, truncate } from '@/utils/format';
 import type { Conversation } from '@/types/chat';
 
@@ -13,6 +13,8 @@ interface Props {
   onNew: () => void;
   onDelete: (id: string) => void;
   onRename: (id: string, title: string) => void;
+  onClose?: () => void;
+  className?: string;
 }
 
 export default function ConversationList({
@@ -22,6 +24,8 @@ export default function ConversationList({
   onNew,
   onDelete,
   onRename,
+  onClose,
+  className,
 }: Props) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState('');
@@ -49,22 +53,24 @@ export default function ConversationList({
   );
 
   return (
-    <div className="flex w-56 flex-col border-r border-slate-200 bg-slate-50">
-      {/* Header */}
-      <div className="flex items-center justify-between px-3 py-3 border-b border-slate-200">
-        <span className="text-sm font-semibold text-slate-700">Chats</span>
-        <Button variant="ghost" size="icon" onClick={onNew} title="New chat">
-          <Plus size={16} />
-        </Button>
+    <aside className={cn('flex w-64 shrink-0 flex-col border-r border-slate-200 bg-slate-50', className)}>
+      <div className="flex h-[65px] items-center justify-between border-b border-slate-200 px-3">
+        <span className="text-sm font-semibold text-slate-800">Conversations</span>
+        <div className="flex items-center gap-1">
+          <Button variant="ghost" size="icon" onClick={onNew} title="New conversation" aria-label="New conversation">
+            <Plus size={16} />
+          </Button>
+          {onClose ? (
+            <Button variant="ghost" size="icon" onClick={onClose} title="Close conversations" aria-label="Close conversations">
+              <X size={16} />
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       <ScrollArea className="flex-1">
         {conversations.length === 0 ? (
-          <p className="p-4 text-xs text-slate-400 text-center">
-            No conversations yet.
-            <br />
-            Start a new chat.
-          </p>
+          <p className="px-4 py-10 text-center text-xs leading-5 text-slate-400">No conversations yet.</p>
         ) : (
           Object.entries(grouped).map(([date, convs]) => (
             <div key={date}>
@@ -90,7 +96,7 @@ export default function ConversationList({
           ))
         )}
       </ScrollArea>
-    </div>
+    </aside>
   );
 }
 
@@ -125,8 +131,8 @@ function ConversationItem({
   return (
     <div
       className={cn(
-        'group relative flex items-start gap-2 px-3 py-2 cursor-pointer',
-        isActive ? 'bg-white border-r-2 border-indigo-500' : 'hover:bg-slate-100'
+        'group relative flex cursor-pointer items-start gap-2 border-r-2 px-3 py-2.5',
+        isActive ? 'border-indigo-500 bg-white' : 'border-transparent hover:bg-slate-100'
       )}
       onClick={onSelect}
     >
@@ -173,18 +179,22 @@ function ConversationItem({
       {/* Actions */}
       {!isEditing && (
         <div
-          className="absolute right-1 top-1.5 hidden group-hover:flex items-center gap-0.5"
+          className="absolute right-1 top-1.5 flex items-center gap-0.5 bg-inherit opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:group-focus-within:opacity-100"
           onClick={(e) => e.stopPropagation()}
         >
           <button
             onClick={onStartEdit}
             className="p-1 text-slate-400 hover:text-slate-700 rounded"
+            title="Rename conversation"
+            aria-label="Rename conversation"
           >
             <Pencil size={11} />
           </button>
           <button
             onClick={onDelete}
             className="p-1 text-slate-400 hover:text-red-500 rounded"
+            title="Delete conversation"
+            aria-label="Delete conversation"
           >
             <Trash2 size={11} />
           </button>

@@ -1,6 +1,6 @@
 # Agent Runtime Boundary
 
-The chat UI should talk to an `AgentRuntime`, not directly to Strands, Browser MCP, or WebMCP orchestration code.
+The chat UI should talk to an `AgentRuntime`, not directly to Strands, Playwright MCP, or WebMCP orchestration code.
 
 Current implementation:
 
