@@ -2,6 +2,7 @@ import {
   AfterToolsEvent,
   Agent,
   BeforeToolsEvent,
+  InvokeModelStage,
   type Message,
   type Tool,
 } from '@strands-agents/sdk'
@@ -41,12 +42,13 @@ import type {
   RunAgentInput,
   RunAgentResult,
 } from './runtime/types.js'
-import { compactToolCatalog, selectToolsForMessage } from './runtime/tool-retrieval.js'
+import { ToolPlanner } from './runtime/tool-planner.js'
 
 const AGENT_CACHE_TTL_MS = 60 * 60 * 1000
 const MAX_CACHED_AGENTS = 50
 type AgentEntry = {
   agent: Agent
+  planner: ToolPlanner
   availableTools: Tool[]
   selectedToolNames: string[]
   connectionId?: string
@@ -98,7 +100,12 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
   }
 
   const entry = await getOrCreateAgent(effectiveConfig, conversationId, input)
-  const selection = selectToolsForMessage(entry.availableTools, input.message, entry.selectedToolNames)
+  const selection = await entry.planner.select(
+    entry.availableTools,
+    input.message,
+    entry.selectedToolNames,
+    recentConversationText(entry.agent),
+  )
   entry.agent.toolRegistry.clear()
   if (selection.tools.length > 0) entry.agent.toolRegistry.add(selection.tools)
   entry.selectedToolNames = selection.names
@@ -109,8 +116,12 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
     input.message,
     effectiveConfig,
     input,
-    entry.availableTools,
+    selection.names,
   ), {
+    invocationState: {
+      plannedToolNames: selection.names,
+      forcePlannedTool: selection.names.length > 0,
+    },
     limits: {
       turns: MAX_AGENT_TURNS,
       totalTokens: MAX_AGENT_TOKENS,
@@ -166,6 +177,14 @@ export async function resolvePendingAction(
 ): Promise<RunAgentResult> {
   const browserResult = await resolvePendingBrowserSignIn(input)
   if (browserResult) return browserResult
+
+  if (input.kind === 'browser-login') {
+    return {
+      content: 'This browser sign-in request is already resolved. Send your next request normally.',
+      stopReason: 'endTurn',
+      trace: [],
+    }
+  }
 
   return resolvePendingWebMcpWrite(input)
 }
@@ -288,16 +307,33 @@ async function getOrCreateAgent(
   }
 
   const model = createModel(config)
-  const initialSelection = selectToolsForMessage(availableTools, input.message)
+  const planner = new ToolPlanner(config, model)
 
   const agent = new Agent({
     name: 'Swagger Local Agent',
     description: 'Local Strands agent that can use browser MCP and WebMCP customer tools.',
     model,
-    tools: initialSelection.tools,
+    tools: [],
     toolExecutor: 'sequential',
     printer: false,
     systemPrompt: systemPrompt(),
+  })
+
+  // Enforce the model-selected first step. Later turns remain agentic so the
+  // model can inspect results, call another planned tool, or answer the user.
+  agent.addMiddleware(InvokeModelStage.Input, async (context) => {
+    const plannedToolNames = Array.isArray(context.invocationState.plannedToolNames)
+      ? context.invocationState.plannedToolNames.filter((name): name is string => typeof name === 'string')
+      : []
+    if (context.invocationState.forcePlannedTool !== true || plannedToolNames.length === 0) {
+      return context
+    }
+
+    context.invocationState.forcePlannedTool = false
+    return {
+      ...context,
+      toolChoice: { tool: { name: plannedToolNames[0] } },
+    }
   })
 
   // Browser navigation already returns the final page state. Ending this turn
@@ -323,8 +359,9 @@ async function getOrCreateAgent(
 
   const entry: AgentEntry = {
     agent,
+    planner,
     availableTools,
-    selectedToolNames: initialSelection.names,
+    selectedToolNames: [],
     connectionId: input.customerConnectionId,
     lastUsedAt: Date.now(),
   }
@@ -381,6 +418,9 @@ function summarizeToolFailure(result: unknown): string {
   }
   if (/target page|browser context|browser has been closed/i.test(text)) {
     return 'The managed browser session was closed. Retry once to start a fresh browser session.'
+  }
+  if (/does not match any elements|could not find.*element/i.test(text)) {
+    return 'Browser automation could not find that page or control in the current browser view. Open the destination page first, then retry the interaction.'
   }
 
   const concise = text.replace(/\s+/g, ' ').trim()
@@ -450,10 +490,9 @@ function withRuntimeContext(
   message: string,
   config: LocalAgentConfig,
   input: RunAgentInput,
-  availableTools: Tool[],
+  plannedToolNames: string[],
 ): string {
   const browserEnabled = config.browserMcpEnabled && Boolean(config.browserMcpCommand)
-  const actionCatalog = compactToolCatalog(availableTools)
   const context = [
     input.webmcpBaseUrl ? `Connected website base URL: ${input.webmcpBaseUrl}.` : '',
     input.webmcpLoginUrl ? `Customer login URL: ${input.webmcpLoginUrl}.` : '',
@@ -461,12 +500,27 @@ function withRuntimeContext(
     browserEnabled
       ? 'Browser MCP is available for visible browser actions.'
       : 'Browser MCP is not available in this run; use WebMCP API tools or explain that browser automation is not configured.',
-    actionCatalog
-      ? `Connected app action catalog: ${actionCatalog}.`
+    plannedToolNames.length > 0
+      ? `The structured planner selected these tools in execution order: ${plannedToolNames.join(', ')}. Start by calling the first tool; do not claim completion without a tool result.`
       : '',
   ].filter(Boolean).join(' ')
 
   return context ? `${message}\n\nRuntime context:\n${context}` : message
+}
+
+function recentConversationText(agent: Agent): string {
+  return agent.messages
+    .slice(-4)
+    .map((message) => {
+      const text = message.content
+        .filter((block) => block.type === 'textBlock')
+        .map((block) => 'text' in block ? String(block.text) : '')
+        .filter(Boolean)
+        .join(' ')
+      return text ? `${message.role}: ${text}` : ''
+    })
+    .filter(Boolean)
+    .join('\n')
 }
 
 function isBrowserNavigationBatch(message: Message): boolean {

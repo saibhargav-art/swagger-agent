@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AlertCircle, Bot, CheckCircle, ChevronDown, ChevronRight, Loader2, User, Wrench, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { AgentText } from './AgentText';
@@ -80,13 +80,46 @@ function RuntimeConfirmationCard({
     ([, value]) => value !== undefined && value !== null && String(value).trim() !== '',
   );
 
+  useEffect(() => {
+    if (confirmation.kind !== 'browser-login') return;
+
+    let disposed = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const checkStatus = async () => {
+      try {
+        const result = await strandsLocalRuntime.browserSignInStatus(confirmation.runId);
+        if (disposed) return;
+        if (result.state === 'authenticated' || result.state === 'none') {
+          updateMessage(activeConversationId ?? '', messageId, {
+            content: result.state === 'authenticated'
+              ? `Sign-in verified. The managed browser is ready${result.pageUrl ? ` at ${result.pageUrl}` : ''}.`
+              : 'This sign-in request is no longer pending. Send your next request normally.',
+            runtimeConfirmation: undefined,
+            runtimeTrace: undefined,
+            isStreaming: false,
+          });
+          return;
+        }
+      } catch {
+        // Keep the login card actionable during a temporary agent or browser outage.
+      }
+      if (!disposed) timeout = setTimeout(checkStatus, 3000);
+    };
+
+    timeout = setTimeout(checkStatus, 1000);
+    return () => {
+      disposed = true;
+      if (timeout) clearTimeout(timeout);
+    };
+  }, [activeConversationId, confirmation.kind, confirmation.runId, messageId, updateMessage]);
+
   const finish = async (approved: boolean) => {
     if (!activeConversationId || status === 'executing') return;
     setStatus('executing');
     setError('');
 
     try {
-      const result = await strandsLocalRuntime.confirm(confirmation.runId, approved);
+      const result = await strandsLocalRuntime.confirm(confirmation.runId, approved, confirmation.kind);
       updateMessage(activeConversationId, messageId, {
         content: result.content ?? (approved ? 'Action completed.' : 'Cancelled the pending action.'),
         runtimeTrace: result.trace,

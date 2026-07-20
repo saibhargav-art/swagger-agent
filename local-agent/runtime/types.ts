@@ -28,6 +28,7 @@ export type RunAgentInput = {
 export type ConfirmPendingActionInput = {
   conversationId: string
   approved: boolean
+  kind?: 'write' | 'browser-login'
   webmcpBearerToken?: string
   webmcpAuthHeader?: string
   webmcpAuthValue?: string

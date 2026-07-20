@@ -8,6 +8,12 @@ export class ChatService {
     const conversation = conversations.find((item) => item.id === conversationId);
     if (!conversation) return;
 
+    for (const message of conversation.messages) {
+      if (message.runtimeConfirmation?.kind === 'browser-login') {
+        updateMessage(conversationId, message.id, { runtimeConfirmation: undefined });
+      }
+    }
+
     const assistantMessageId = generateId();
     let assistantAdded = false;
     const ensureAssistantMessage = () => {

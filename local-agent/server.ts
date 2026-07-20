@@ -8,6 +8,7 @@ import {
   getCustomerConnection,
 } from './connections/customer-connections.js'
 import { releaseCustomerConnection, resolvePendingAction, runAgent, shutdownAgents } from './agent-runtime.js'
+import { getBrowserSignInStatus } from './runtime/browser-session.js'
 import type { RunAgentInput } from './runtime/types.js'
 import { inspectMcpServers } from './tools/mcp-clients.js'
 
@@ -109,6 +110,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson<{
         conversationId?: string
         approved?: boolean
+        kind?: 'write' | 'browser-login'
         webmcpBearerToken?: string
         webmcpAuthHeader?: string
         webmcpAuthValue?: string
@@ -120,6 +122,7 @@ const server = http.createServer(async (req, res) => {
       const result = await resolvePendingAction({
         conversationId: body.conversationId ?? 'default',
         approved: Boolean(body.approved),
+        kind: body.kind,
         webmcpBearerToken: connection?.bearerToken ?? body.webmcpBearerToken,
         webmcpAuthHeader: body.webmcpAuthHeader,
         webmcpAuthValue: body.webmcpAuthValue,
@@ -128,6 +131,18 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 200, result)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Pending action confirmation failed'
+      sendJson(res, 500, { error: message })
+    }
+    return
+  }
+
+  if (req.method === 'POST' && req.url === '/browser-session/status') {
+    try {
+      const body = await readJson<{ conversationId?: string }>(req)
+      const result = await getBrowserSignInStatus(body.conversationId?.trim() || 'default')
+      sendJson(res, 200, result)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Browser session status check failed'
       sendJson(res, 500, { error: message })
     }
     return

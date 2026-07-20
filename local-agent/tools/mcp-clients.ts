@@ -116,6 +116,25 @@ export async function navigateWithBrowserMcp(
   return performBrowserNavigation(config, url, options)
 }
 
+export async function readBrowserPageUrl(config: BrowserMcpConfig): Promise<string | null> {
+  if (!config.browserMcpEnabled || !config.browserMcpCommand) return null
+
+  try {
+    return await performBrowserPageRead(config)
+  } catch (error) {
+    if (!isClosedBrowserSession(error)) throw error
+  }
+
+  await resetManagedClient('browser-mcp')
+  return performBrowserPageRead(config)
+}
+
+async function performBrowserPageRead(config: BrowserMcpConfig): Promise<string | null> {
+  const client = getManagedClient('browser-mcp', config.browserMcpCommand!, config.browserMcpArgs)
+  const tools = await client.listTools()
+  return readConnectedPageUrl(client, tools)
+}
+
 async function performBrowserNavigation(
   config: BrowserMcpConfig,
   url: string,

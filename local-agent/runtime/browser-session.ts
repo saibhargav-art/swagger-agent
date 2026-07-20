@@ -1,5 +1,9 @@
 import type { LocalAgentConfig } from '../config.js'
-import { navigateWithBrowserMcp, type BrowserMcpConfig } from '../tools/mcp-clients.js'
+import {
+  navigateWithBrowserMcp,
+  readBrowserPageUrl,
+  type BrowserMcpConfig,
+} from '../tools/mcp-clients.js'
 import { isApproval, isCancellation } from './confirmation.js'
 import { isSuccessfulToolResult, toolResultText } from './agent-trace.js'
 import type { AgentTraceStep, ConfirmPendingActionInput, RunAgentInput, RunAgentResult } from './types.js'
@@ -15,9 +19,31 @@ type PendingBrowserSignIn = {
   createdAt: number
 }
 
+export type BrowserSignInStatus = {
+  state: 'none' | 'waiting' | 'authenticated'
+  pageUrl?: string
+}
+
+export async function getBrowserSignInStatus(
+  conversationId: string,
+  readPageUrl: (config: BrowserMcpConfig) => Promise<string | null> = readBrowserPageUrl,
+): Promise<BrowserSignInStatus> {
+  const pending = getPendingSignIn(conversationId)
+  if (!pending) return { state: 'none' }
+
+  const pageUrl = await currentBrowserPageUrl(pending, readPageUrl)
+  if (!pageUrl || !isAuthenticatedCustomerPage(pageUrl, pending)) {
+    return { state: 'waiting', ...(pageUrl ? { pageUrl } : {}) }
+  }
+
+  pendingSignIns.delete(conversationId)
+  return { state: 'authenticated', pageUrl }
+}
+
 export async function handlePendingBrowserMessage(
   conversationId: string,
   message: string,
+  readPageUrl: (config: BrowserMcpConfig) => Promise<string | null> = readBrowserPageUrl,
 ): Promise<RunAgentResult | null> {
   const pending = getPendingSignIn(conversationId)
   if (!pending) return null
@@ -25,7 +51,20 @@ export async function handlePendingBrowserMessage(
   if (isCancellation(message)) {
     return resolvePendingBrowserSignIn({ conversationId, approved: false })
   }
-  if (isApproval(message) || /^(?:continue|done|signed\s+in|logged\s+in|ready)$/i.test(message.trim())) {
+
+  const approval = isApproval(message) || /^(?:continue|done|signed\s+in|logged\s+in|ready)$/i.test(message.trim())
+  const signInStatus = await getBrowserSignInStatus(conversationId, readPageUrl)
+  if (signInStatus.state === 'authenticated') {
+    if (!approval) return null
+
+    return {
+      content: `Sign-in verified. The managed browser is ready at ${signInStatus.pageUrl}.`,
+      stopReason: 'endTurn',
+      trace: [],
+    }
+  }
+
+  if (approval) {
     return resolvePendingBrowserSignIn({ conversationId, approved: true })
   }
 
@@ -239,4 +278,24 @@ function isSignInPage(pageUrl: string, configuredSignInUrl?: string): boolean {
     if (/\b(?:login|log-in|signin|sign-in|auth)\b/i.test(pageUrl)) return true
   }
   return Boolean(configuredSignInUrl && sameUrl(pageUrl, configuredSignInUrl))
+}
+
+async function currentBrowserPageUrl(
+  pending: PendingBrowserSignIn,
+  readPageUrl: (config: BrowserMcpConfig) => Promise<string | null>,
+): Promise<string | null> {
+  try {
+    return await readPageUrl(pending.browserConfig)
+  } catch {
+    return null
+  }
+}
+
+function isAuthenticatedCustomerPage(pageUrl: string, pending: PendingBrowserSignIn): boolean {
+  try {
+    return new URL(pageUrl).origin === new URL(pending.destinationUrl).origin
+      && !isSignInPage(pageUrl, pending.signInUrl)
+  } catch {
+    return false
+  }
 }

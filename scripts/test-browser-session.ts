@@ -5,6 +5,8 @@ import {
   browserNavigationResult,
   captureBrowserSignIn,
   clearBrowserSessions,
+  getBrowserSignInStatus,
+  handlePendingBrowserMessage,
 } from '../local-agent/runtime/browser-session.js'
 import type { AgentTraceStep } from '../local-agent/runtime/types.js'
 
@@ -41,6 +43,31 @@ try {
   )
   assert.equal(activeLogin?.confirmationRequired?.kind, 'browser-login')
   assert.equal(activeLogin?.confirmationRequired?.details.requestedPage, ordersUrl)
+
+  const reconciled = await handlePendingBrowserMessage(
+    'active-login',
+    'go to the admin page',
+    async () => ordersUrl,
+  )
+  assert.equal(reconciled, null, 'An authenticated customer page must release the next normal request.')
+
+  captureBrowserSignIn(
+    'unfinished-login',
+    [navigationStep(loginUrl)],
+    { message: 'open orders', webmcpLoginUrl: loginUrl },
+    config,
+  )
+  const stillWaiting = await handlePendingBrowserMessage(
+    'unfinished-login',
+    'go to the admin page',
+    async () => loginUrl,
+  )
+  assert.equal(stillWaiting?.confirmationRequired?.kind, 'browser-login')
+
+  const liveStatus = await getBrowserSignInStatus('unfinished-login', async () => ordersUrl)
+  assert.deepEqual(liveStatus, { state: 'authenticated', pageUrl: ordersUrl })
+  const resolvedStatus = await getBrowserSignInStatus('unfinished-login', async () => ordersUrl)
+  assert.deepEqual(resolvedStatus, { state: 'none' })
 
   const completed = browserNavigationResult([navigationStep(ordersUrl)])
   assert.equal(completed?.content, `Opened ${ordersUrl} in the managed browser.`)

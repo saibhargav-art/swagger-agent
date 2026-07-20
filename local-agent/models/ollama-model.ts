@@ -42,6 +42,15 @@ type OllamaChatResponse = {
   eval_count?: number
 }
 
+type OllamaStructuredRequest = {
+  baseUrl: string
+  modelId: string
+  systemPrompt: string
+  prompt: string
+  schema: Record<string, unknown>
+  maxTokens?: number
+}
+
 export class OllamaModel extends Model<OllamaModelConfig> {
   private config: OllamaModelConfig
 
@@ -60,6 +69,17 @@ export class OllamaModel extends Model<OllamaModelConfig> {
 
   async *stream(messages: Message[], options: StreamOptions = {}): AsyncIterable<ModelStreamEvent> {
     const startedAt = Date.now()
+    const forcedToolName = selectedToolName(options.toolChoice)
+    const toolSpecs = forcedToolName
+      ? (options.toolSpecs ?? []).filter((tool) => tool.name === forcedToolName)
+      : (options.toolSpecs ?? [])
+    const ollamaMessages = toOllamaMessages(messages, options.systemPrompt)
+    if (forcedToolName) {
+      ollamaMessages.unshift({
+        role: 'system',
+        content: `For this turn, call the provided ${JSON.stringify(forcedToolName)} function. Do not answer with prose before the function call.`,
+      })
+    }
     const response = await fetch(`${normalizeOllamaBaseUrl(this.config.baseUrl).replace(/\/$/, '')}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -67,8 +87,8 @@ export class OllamaModel extends Model<OllamaModelConfig> {
         model: this.config.modelId,
         stream: false,
         keep_alive: process.env.OLLAMA_KEEP_ALIVE ?? '10m',
-        messages: toOllamaMessages(messages, options.systemPrompt),
-        tools: (options.toolSpecs ?? []).map(toOllamaTool),
+        messages: ollamaMessages,
+        tools: toolSpecs.map(toOllamaTool),
         options: {
           temperature: this.config.temperature ?? 0.1,
           top_p: this.config.topP,
@@ -150,8 +170,62 @@ export class OllamaModel extends Model<OllamaModelConfig> {
   }
 }
 
+export async function generateOllamaStructuredJson({
+  baseUrl,
+  modelId,
+  systemPrompt,
+  prompt,
+  schema,
+  maxTokens = 256,
+}: OllamaStructuredRequest): Promise<unknown> {
+  const startedAt = Date.now()
+  const response = await fetch(`${normalizeOllamaBaseUrl(baseUrl).replace(/\/$/, '')}/api/chat`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: modelId,
+      stream: false,
+      keep_alive: process.env.OLLAMA_KEEP_ALIVE ?? '10m',
+      format: schema,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: prompt },
+      ],
+      options: {
+        temperature: 0,
+        num_predict: maxTokens,
+        num_ctx: Number(process.env.OLLAMA_NUM_CTX ?? 4096),
+      },
+    }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Ollama tool planning failed: HTTP ${response.status} ${await response.text()}`)
+  }
+
+  const payload = await response.json() as OllamaChatResponse
+  if (process.env.STRANDS_DEBUG_TIMING === 'true') {
+    console.log(
+      `[ollama-planner] ${modelId} ${Date.now() - startedAt}ms input=${payload.prompt_eval_count ?? 0} output=${payload.eval_count ?? 0}`,
+    )
+  }
+  const content = payload.message?.content?.trim()
+  if (!content) throw new Error('Ollama tool planning returned an empty response.')
+
+  try {
+    return JSON.parse(content) as unknown
+  } catch {
+    throw new Error('Ollama tool planning returned invalid structured JSON.')
+  }
+}
+
 function normalizeOllamaBaseUrl(baseUrl: string): string {
   return baseUrl.replace('://localhost:', '://127.0.0.1:')
+}
+
+function selectedToolName(toolChoice: StreamOptions['toolChoice']): string | undefined {
+  if (!toolChoice || !('tool' in toolChoice)) return undefined
+  return toolChoice.tool.name
 }
 
 function toOllamaMessages(messages: Message[], systemPrompt?: StreamOptions['systemPrompt']): OllamaMessage[] {

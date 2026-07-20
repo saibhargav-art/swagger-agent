@@ -14,7 +14,7 @@
     "agent:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restart-agent.ps1 -StopOnly",
     "agent:check": "tsc -p local-agent/tsconfig.json --noEmit",
     "agent:test:browser-session": "tsx --tsconfig local-agent/tsconfig.json scripts/test-browser-session.ts",
-    "agent:test:tool-retrieval": "tsx --tsconfig local-agent/tsconfig.json scripts/test-tool-retrieval.ts",
+    "agent:test:tool-planner": "tsx --tsconfig local-agent/tsconfig.json scripts/test-tool-planner.ts",
     "smoke:connections": "node scripts/smoke-connections.mjs"
   },
   "dependencies": {

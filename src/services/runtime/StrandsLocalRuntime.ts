@@ -25,6 +25,12 @@ type StrandsResponse = {
   }
 }
 
+type BrowserSignInStatus = {
+  state: 'none' | 'waiting' | 'authenticated'
+  pageUrl?: string
+  error?: string
+}
+
 export class StrandsLocalRuntime implements AgentRuntime {
   readonly kind = 'strands-local' as const
 
@@ -69,11 +75,34 @@ export class StrandsLocalRuntime implements AgentRuntime {
     yield { type: 'done' }
   }
 
-  async confirm(runId: string, approved: boolean): Promise<StrandsResponse> {
-    return this.resolveConfirmation(runId, approved)
+  async confirm(
+    runId: string,
+    approved: boolean,
+    kind?: 'write' | 'browser-login',
+  ): Promise<StrandsResponse> {
+    return this.resolveConfirmation(runId, approved, kind)
   }
 
-  private async resolveConfirmation(runId: string, approved: boolean): Promise<StrandsResponse> {
+  async browserSignInStatus(runId: string): Promise<BrowserSignInStatus> {
+    const runtime = useAgentRuntimeStore.getState()
+    const baseUrl = runtime.agentUrl || 'http://localhost:8787'
+    const response = await fetch(`${baseUrl.replace(/\/$/, '')}/browser-session/status`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ conversationId: runId }),
+    })
+    const payload = await readBrowserStatus(response)
+    if (!response.ok || payload.error) {
+      throw new Error(payload.error ?? `Local Strands agent failed with HTTP ${response.status}`)
+    }
+    return payload
+  }
+
+  private async resolveConfirmation(
+    runId: string,
+    approved: boolean,
+    kind?: 'write' | 'browser-login',
+  ): Promise<StrandsResponse> {
     const runtime = useAgentRuntimeStore.getState()
     const connection = useWebMCPStore.getState()
     const baseUrl = runtime.agentUrl || 'http://localhost:8787'
@@ -83,6 +112,7 @@ export class StrandsLocalRuntime implements AgentRuntime {
       body: JSON.stringify({
         conversationId: runId,
         approved,
+        kind,
         customerConnectionId: connection.connectionId || undefined,
       }),
     })
@@ -204,5 +234,16 @@ async function readResponse(response: Response): Promise<StrandsResponse> {
         ? 'The local agent returned an invalid response.'
         : `The local agent failed with HTTP ${response.status}.`,
     }
+  }
+}
+
+async function readBrowserStatus(response: Response): Promise<BrowserSignInStatus> {
+  const text = await response.text()
+  if (!text) return { state: 'none' }
+
+  try {
+    return JSON.parse(text) as BrowserSignInStatus
+  } catch {
+    return { state: 'none', error: 'The local agent returned an invalid browser status.' }
   }
 }
