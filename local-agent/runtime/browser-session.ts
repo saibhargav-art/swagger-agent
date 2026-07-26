@@ -326,6 +326,12 @@ function resolveRequestedCustomerPage(input: RunAgentInput): string | null {
 }
 
 function looksLikeBrowserNavigation(message: string): boolean {
+  if (/\b(?:and|then)\b.*\b(?:approve|book|cancel|check|create|delete|find|get|list|search|submit|update)\b/i.test(message)) {
+    return false
+  }
+  if (/\b(?:from there|instead of .*tools|using the website|through the website)\b/i.test(message)) {
+    return false
+  }
   return /\b(?:open|go|goto|navigate|visit|launch|show)\b/i.test(message)
     && /\b(?:website|site|app|page|url|browser|portal)\b/i.test(message)
 }
@@ -333,6 +339,7 @@ function looksLikeBrowserNavigation(message: string): boolean {
 function extractRequestedPageName(message: string): string {
   return message
     .replace(/https?:\/\/[^\s]+/gi, ' ')
+    .replace(/\b(?:and|then)\b[\s\S]*$/i, ' ')
     .replace(/\b(?:can|could|you|please|open|go|goto|navigate|visit|launch|show|the|a|an|to|connected|customer|website|site|app|portal|url|browser|page|section|for|me)\b/gi, ' ')
     .replace(/[^\w\s-]/g, ' ')
     .replace(/\s+/g, ' ')

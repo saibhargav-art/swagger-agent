@@ -104,6 +104,16 @@ try {
   )
   assert.equal(directNavigation?.content, 'Browser automation is not configured for the local agent.')
 
+  const mixedBrowserTask = await openCustomerPageFromChat(
+    config,
+    {
+      message: 'can you open connected website and create order from there instead of doing it here from tools',
+      webmcpBaseUrl: 'http://localhost:5174',
+      webmcpLoginUrl: loginUrl,
+    },
+  )
+  assert.equal(mixedBrowserTask, null, 'Mixed browser tasks must go through the agent planner, not route slugging.')
+
   console.log('Browser session regression tests passed.')
 } finally {
   clearBrowserSessions()
