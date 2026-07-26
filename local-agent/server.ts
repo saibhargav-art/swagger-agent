@@ -346,6 +346,7 @@ function isAllowedOrigin(origin: string | undefined): boolean {
   if (!origin) return true
   const configured = process.env.STRANDS_AGENT_CORS_ORIGIN
   if (configured === '*') return true
+  if (!configured && isLoopbackOrigin(origin)) return true
 
   const allowed = new Set(
     (configured
@@ -355,6 +356,16 @@ function isAllowedOrigin(origin: string | undefined): boolean {
       .filter(Boolean),
   )
   return allowed.has(origin.replace(/\/$/, ''))
+}
+
+function isLoopbackOrigin(origin: string): boolean {
+  try {
+    const { protocol, hostname } = new URL(origin)
+    return (protocol === 'http:' || protocol === 'https:')
+      && ['localhost', '127.0.0.1', '::1', '[::1]'].includes(hostname)
+  } catch {
+    return false
+  }
 }
 
 function sendJson(res: http.ServerResponse, status: number, value: unknown) {
