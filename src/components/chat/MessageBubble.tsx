@@ -50,7 +50,7 @@ export default function MessageBubble({ message }: Props) {
           )
         ) : null}
 
-        {!isUser && message.runtimeTrace?.length ? <RuntimeTraceCard steps={message.runtimeTrace} /> : null}
+        {!isUser && message.runtimeTrace?.length && !message.runtimeConfirmation ? <RuntimeTraceCard steps={message.runtimeTrace} /> : null}
 
         {!visibleContent && !message.runtimeConfirmation && !message.isStreaming ? (
           <div className="text-sm text-slate-500">

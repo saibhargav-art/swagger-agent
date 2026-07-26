@@ -110,7 +110,7 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
   const pureBrowserNavigation = isPureBrowserNavigationRequest(input.message)
   const mixedBrowserWorkflow = isMixedBrowserWorkflowRequest(input.message)
   const selection = await entry.planner.select(
-    entry.availableTools,
+    mixedBrowserWorkflow ? browserWorkflowTools(entry.availableTools) : entry.availableTools,
     input.message,
     entry.selectedToolNames,
     recentConversationText(entry.agent),
@@ -151,12 +151,16 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
     return {
       content: confirmationPrompt(pendingWrite.title, pendingWrite.input),
       stopReason: result.stopReason,
-      trace,
+      trace: trace.map((step) => step.name === pendingWrite.toolName || step.name === pendingWrite.toolName.replace(/[^a-zA-Z0-9_]/g, '_')
+        ? { ...step, ok: true, status: 'attention' as const, result: confirmationTraceResult(step.result) }
+        : step),
       confirmationRequired: {
         runId: conversationId,
         toolName: pendingWrite.toolName,
         title: pendingWrite.title,
         details: pendingWrite.input,
+        confirmLabel: actionConfirmLabel(pendingWrite.title),
+        cancelLabel: 'Cancel',
       },
     }
   }
@@ -260,6 +264,26 @@ function confirmationPrompt(title: string, details: Record<string, unknown>): st
   const populated = Object.entries(details).filter(([, value]) => value !== undefined && value !== null && value !== '')
   if (populated.length === 0) return `Confirm ${title} before I proceed.`
   return `Confirm ${title} with these details.`
+}
+
+function confirmationTraceResult(result: unknown): unknown {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return result
+  const record = result as Record<string, unknown>
+  if (record.needsConfirmation) {
+    return {
+      state: 'Waiting for confirmation',
+      action: record.tool,
+    }
+  }
+  return result
+}
+
+function actionConfirmLabel(title: string): string {
+  if (/create/i.test(title)) return 'Create'
+  if (/delete|remove/i.test(title)) return 'Delete'
+  if (/update/i.test(title)) return 'Update'
+  if (/approve/i.test(title)) return 'Approve'
+  return 'Confirm'
 }
 
 export async function shutdownAgents(): Promise<void> {
@@ -580,6 +604,18 @@ function addMissingBrowserTools(selection: { tools: Tool[]; names: string[] }, a
     selection.names.push(tool.name)
     selected.add(tool.name)
   }
+}
+
+function browserWorkflowTools(availableTools: Tool[]): Tool[] {
+  const browserTools = availableTools.filter((tool) => isBrowserToolName(tool.name))
+  if (browserTools.length === 0) return availableTools
+  const readOnlyWebMcpTools = availableTools.filter((tool) => !isBrowserToolName(tool.name) && isReadOnlyTool(tool))
+  return [...browserTools, ...readOnlyWebMcpTools]
+}
+
+function isReadOnlyTool(tool: Tool): boolean {
+  return /read-only tool|readOnly|list|search|get|status|find|view/i.test(`${tool.name} ${tool.description}`)
+    && !/create|delete|remove|update|approve|write|changes customer data|POST|PUT|PATCH/i.test(`${tool.name} ${tool.description}`)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
