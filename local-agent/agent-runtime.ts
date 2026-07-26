@@ -38,11 +38,16 @@ import {
   resolvePendingBrowserSignIn,
 } from './runtime/browser-session.js'
 import { isApproval, isCancellation } from './runtime/confirmation.js'
+import { classifyExecution, type ExecutionPlan } from './runtime/execution-mode.js'
 import type {
   ConfirmPendingActionInput,
   RunAgentInput,
   RunAgentResult,
 } from './runtime/types.js'
+import {
+  expandSelectionForExecutionMode,
+  toolsForExecutionMode,
+} from './runtime/tool-policy.js'
 import { ToolPlanner } from './runtime/tool-planner.js'
 
 const AGENT_CACHE_TTL_MS = 60 * 60 * 1000
@@ -107,17 +112,15 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
   }
 
   const entry = await getOrCreateAgent(effectiveConfig, conversationId, input)
-  const pureBrowserNavigation = isPureBrowserNavigationRequest(input.message)
-  const mixedBrowserWorkflow = isMixedBrowserWorkflowRequest(input.message)
+  const executionPlan = classifyExecution(input.message)
+  const candidateTools = toolsForExecutionMode(entry.availableTools, executionPlan)
   const selection = await entry.planner.select(
-    mixedBrowserWorkflow ? browserWorkflowTools(entry.availableTools) : entry.availableTools,
+    candidateTools,
     input.message,
     entry.selectedToolNames,
     recentConversationText(entry.agent),
   )
-  if (mixedBrowserWorkflow && selection.names.some(isBrowserToolName)) {
-    addMissingBrowserTools(selection, entry.availableTools)
-  }
+  expandSelectionForExecutionMode(selection, entry.availableTools, executionPlan)
   entry.agent.toolRegistry.clear()
   if (selection.tools.length > 0) entry.agent.toolRegistry.add(selection.tools)
   entry.selectedToolNames = selection.names
@@ -129,11 +132,12 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
     effectiveConfig,
     input,
     selection.names,
+    executionPlan,
   ), {
     invocationState: {
       plannedToolNames: selection.names,
       forcePlannedTool: selection.names.length > 0,
-      pureBrowserNavigation,
+      pureBrowserNavigation: executionPlan.pureBrowserNavigation,
     },
     limits: {
       turns: MAX_AGENT_TURNS,
@@ -144,7 +148,7 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
   const trace = extractTrace(agent.messages.slice(beforeMessageCount))
   const browserSignInResult = captureBrowserSignIn(conversationId, trace, input, effectiveConfig)
   if (browserSignInResult) return browserSignInResult
-  const completedBrowserNavigation = pureBrowserNavigation ? browserNavigationResult(trace) : null
+  const completedBrowserNavigation = executionPlan.pureBrowserNavigation ? browserNavigationResult(trace) : null
   if (completedBrowserNavigation) return completedBrowserNavigation
   const pendingWrite = getPendingWebMcpWrite(conversationId)
   if (pendingWrite) {
@@ -528,12 +532,14 @@ function withRuntimeContext(
   config: LocalAgentConfig,
   input: RunAgentInput,
   plannedToolNames: string[],
+  executionPlan: ExecutionPlan,
 ): string {
   const browserEnabled = config.browserMcpEnabled && Boolean(config.browserMcpCommand)
   const context = [
     input.webmcpBaseUrl ? `Connected website base URL: ${input.webmcpBaseUrl}.` : '',
     input.webmcpLoginUrl ? `Customer login URL: ${input.webmcpLoginUrl}.` : '',
     input.browserStartUrl ? `Browser start URL: ${input.browserStartUrl}.` : '',
+    `Execution mode: ${executionPlan.mode}.`,
     browserEnabled
       ? 'Browser MCP is available for visible browser actions.'
       : 'Browser MCP is not available in this run; use WebMCP API tools or explain that browser automation is not configured.',
@@ -570,52 +576,6 @@ function isBrowserNavigationBatch(message: Message): boolean {
     if (toolUse.name !== 'browser_tabs' || !isRecord(toolUse.input)) return false
     return toolUse.input.action === 'new'
   })
-}
-
-function isPureBrowserNavigationRequest(message: string): boolean {
-  const text = message.toLowerCase()
-  if (/\b(?:and|then)\b.*\b(?:approve|book|cancel|create|delete|fill|press|select|submit|type|update)\b/i.test(text)) {
-    return false
-  }
-  if (/\b(?:from there|instead of .*tools|using the website|through the website)\b/i.test(text)) {
-    return false
-  }
-  return /\b(?:open|go|goto|navigate|visit|launch|show)\b/i.test(text)
-    && /\b(?:website|site|app|page|url|browser|portal|dashboard|admin|orders?)\b/i.test(text)
-}
-
-function isMixedBrowserWorkflowRequest(message: string): boolean {
-  const text = message.toLowerCase()
-  return /\b(?:browser|website|site|app|portal|page|ui|there)\b/i.test(text)
-    && /\b(?:approve|book|cancel|create|delete|fill|press|select|submit|type|update)\b/i.test(text)
-}
-
-function isBrowserToolName(name: string): boolean {
-  return /^browser_/i.test(name)
-}
-
-function addMissingBrowserTools(selection: { tools: Tool[]; names: string[] }, availableTools: Tool[]): void {
-  const selected = new Set(selection.names)
-  const browserTools = availableTools.filter((tool) => isBrowserToolName(tool.name))
-
-  for (const tool of browserTools) {
-    if (selected.has(tool.name)) continue
-    selection.tools.push(tool)
-    selection.names.push(tool.name)
-    selected.add(tool.name)
-  }
-}
-
-function browserWorkflowTools(availableTools: Tool[]): Tool[] {
-  const browserTools = availableTools.filter((tool) => isBrowserToolName(tool.name))
-  if (browserTools.length === 0) return availableTools
-  const readOnlyWebMcpTools = availableTools.filter((tool) => !isBrowserToolName(tool.name) && isReadOnlyTool(tool))
-  return [...browserTools, ...readOnlyWebMcpTools]
-}
-
-function isReadOnlyTool(tool: Tool): boolean {
-  return /read-only tool|readOnly|list|search|get|status|find|view/i.test(`${tool.name} ${tool.description}`)
-    && !/create|delete|remove|update|approve|write|changes customer data|POST|PUT|PATCH/i.test(`${tool.name} ${tool.description}`)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
