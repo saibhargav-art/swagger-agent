@@ -106,18 +106,22 @@ export class StrandsLocalRuntime implements AgentRuntime {
     const runtime = useAgentRuntimeStore.getState()
     const connection = useWebMCPStore.getState()
     const baseUrl = runtime.agentUrl || 'http://localhost:8787'
-    const response = await fetch(`${baseUrl.replace(/\/$/, '')}/confirm`, {
+    let response = await fetch(`${baseUrl.replace(/\/$/, '')}/confirm`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        conversationId: runId,
-        approved,
-        kind,
-        customerConnectionId: connection.connectionId || undefined,
-      }),
+      body: JSON.stringify(buildConfirmPayload(runId, approved, kind, connection)),
     })
 
-    const payload = await readResponse(response)
+    let payload = await readResponse(response)
+    if ((!response.ok || payload.error) && isStaleCustomerConnection(payload.error)) {
+      await restoreCustomerConnection(runtime.agentUrl)
+      response = await fetch(`${baseUrl.replace(/\/$/, '')}/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(buildConfirmPayload(runId, approved, kind, useWebMCPStore.getState())),
+      })
+      payload = await readResponse(response)
+    }
     if (!response.ok || payload.error) {
       throw new Error(payload.error ?? `Local Strands agent failed with HTTP ${response.status}`)
     }
@@ -156,7 +160,27 @@ function buildRequestPayload(
     context7Command: runtime.context7Enabled ? runtime.context7Command || undefined : undefined,
     context7Args: runtime.context7Enabled ? parseArgs(runtime.context7Args) : [],
     customerConnectionId: connection.connectionId || undefined,
+    webmcpBaseUrl: connection.baseUrl || undefined,
+    webmcpLoginUrl: connection.loginUrl || undefined,
+    webmcpBearerToken: connection.bearerToken || undefined,
     chatAppUrl: typeof window !== 'undefined' ? window.location.origin : undefined,
+  }
+}
+
+function buildConfirmPayload(
+  runId: string,
+  approved: boolean,
+  kind: 'write' | 'browser-login' | undefined,
+  connection: ReturnType<typeof useWebMCPStore.getState>,
+) {
+  return {
+    conversationId: runId,
+    approved,
+    kind,
+    customerConnectionId: connection.connectionId || undefined,
+    webmcpBaseUrl: connection.baseUrl || undefined,
+    webmcpLoginUrl: connection.loginUrl || undefined,
+    webmcpBearerToken: connection.bearerToken || undefined,
   }
 }
 

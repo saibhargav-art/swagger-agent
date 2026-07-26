@@ -122,7 +122,7 @@ const server = http.createServer(async (req, res) => {
         customerConnectionId?: string
       }>(req)
       const connection = body.customerConnectionId
-        ? getCustomerConnection(body.customerConnectionId)
+        ? optionalCustomerConnection(body.customerConnectionId)
         : undefined
       const result = await resolvePendingAction({
         conversationId: body.conversationId ?? 'default',
@@ -303,7 +303,13 @@ async function shutdown() {
 
 function resolveCustomerConnection(input: RunAgentInput): RunAgentInput {
   if (!input.customerConnectionId) return input
-  const connection = getCustomerConnection(input.customerConnectionId)
+  let connection: ReturnType<typeof getCustomerConnection>
+  try {
+    connection = getCustomerConnection(input.customerConnectionId)
+  } catch (error) {
+    if (input.webmcpBaseUrl && input.webmcpBearerToken) return input
+    throw error
+  }
   return {
     ...input,
     webmcpBaseUrl: connection.baseUrl,
@@ -311,6 +317,14 @@ function resolveCustomerConnection(input: RunAgentInput): RunAgentInput {
     browserStartUrl: connection.loginUrl ?? connection.baseUrl,
     webmcpBearerToken: connection.bearerToken,
     allowWebMcpWrites: false,
+  }
+}
+
+function optionalCustomerConnection(connectionId: string) {
+  try {
+    return getCustomerConnection(connectionId)
+  } catch {
+    return undefined
   }
 }
 
