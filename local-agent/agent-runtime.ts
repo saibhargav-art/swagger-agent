@@ -107,12 +107,17 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
   }
 
   const entry = await getOrCreateAgent(effectiveConfig, conversationId, input)
+  const pureBrowserNavigation = isPureBrowserNavigationRequest(input.message)
+  const mixedBrowserWorkflow = isMixedBrowserWorkflowRequest(input.message)
   const selection = await entry.planner.select(
     entry.availableTools,
     input.message,
     entry.selectedToolNames,
     recentConversationText(entry.agent),
   )
+  if (mixedBrowserWorkflow && selection.names.some(isBrowserToolName)) {
+    addMissingBrowserTools(selection, entry.availableTools)
+  }
   entry.agent.toolRegistry.clear()
   if (selection.tools.length > 0) entry.agent.toolRegistry.add(selection.tools)
   entry.selectedToolNames = selection.names
@@ -128,6 +133,7 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
     invocationState: {
       plannedToolNames: selection.names,
       forcePlannedTool: selection.names.length > 0,
+      pureBrowserNavigation,
     },
     limits: {
       turns: MAX_AGENT_TURNS,
@@ -138,7 +144,7 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
   const trace = extractTrace(agent.messages.slice(beforeMessageCount))
   const browserSignInResult = captureBrowserSignIn(conversationId, trace, input, effectiveConfig)
   if (browserSignInResult) return browserSignInResult
-  const completedBrowserNavigation = browserNavigationResult(trace)
+  const completedBrowserNavigation = pureBrowserNavigation ? browserNavigationResult(trace) : null
   if (completedBrowserNavigation) return completedBrowserNavigation
   const pendingWrite = getPendingWebMcpWrite(conversationId)
   if (pendingWrite) {
@@ -359,7 +365,7 @@ async function getOrCreateAgent(
       event.endTurn = 'The tool call failed.'
       return
     }
-    if (browserNavigationInvocations.delete(event.invocationState)) {
+    if (event.invocationState.pureBrowserNavigation === true && browserNavigationInvocations.delete(event.invocationState)) {
       event.endTurn = 'Browser navigation completed.'
     }
   })
@@ -542,6 +548,40 @@ function isBrowserNavigationBatch(message: Message): boolean {
   })
 }
 
+function isPureBrowserNavigationRequest(message: string): boolean {
+  const text = message.toLowerCase()
+  if (/\b(?:and|then)\b.*\b(?:approve|book|cancel|create|delete|fill|press|select|submit|type|update)\b/i.test(text)) {
+    return false
+  }
+  if (/\b(?:from there|instead of .*tools|using the website|through the website)\b/i.test(text)) {
+    return false
+  }
+  return /\b(?:open|go|goto|navigate|visit|launch|show)\b/i.test(text)
+    && /\b(?:website|site|app|page|url|browser|portal|dashboard|admin|orders?)\b/i.test(text)
+}
+
+function isMixedBrowserWorkflowRequest(message: string): boolean {
+  const text = message.toLowerCase()
+  return /\b(?:browser|website|site|app|portal|page|ui|there)\b/i.test(text)
+    && /\b(?:approve|book|cancel|create|delete|fill|press|select|submit|type|update)\b/i.test(text)
+}
+
+function isBrowserToolName(name: string): boolean {
+  return /^browser_/i.test(name)
+}
+
+function addMissingBrowserTools(selection: { tools: Tool[]; names: string[] }, availableTools: Tool[]): void {
+  const selected = new Set(selection.names)
+  const browserTools = availableTools.filter((tool) => isBrowserToolName(tool.name))
+
+  for (const tool of browserTools) {
+    if (selected.has(tool.name)) continue
+    selection.tools.push(tool)
+    selection.names.push(tool.name)
+    selected.add(tool.name)
+  }
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -553,7 +593,8 @@ function systemPrompt(): string {
     'First decide whether the request is supported by available tools. If not supported, say what connected app actions are available.',
     'Use WebMCP API tools for customer app data/actions when available.',
     'Use Browser MCP when the user asks to open the site, navigate pages, click/type in the UI, inspect visible page state, or handle login/OTP/browser-only interaction.',
-    'If Browser MCP is available and the user asks to use the website UI, open the connected website/login URL first and continue from the visible page.',
+    'If Browser MCP is available and the user asks to use the website UI, open the connected website/login URL first, inspect the visible page, navigate through visible links or controls, then complete the requested UI action.',
+    'When the user says to do something from there, through the website, in the UI, or instead of tools, do not stop after opening the site; continue with browser inspection/click/type actions until the task is completed or blocked.',
     'For browser navigation, start from the connected website URL and derive or discover routes from the request and visible page; do not rely on application-specific route names.',
     'Prefer WebMCP API tools over browser clicking for direct data actions unless the user specifically asks to use the website UI or no API tool is available.',
     'For read-only questions, call list/search/get tools as needed, inspect returned records, filter/group/count them, and answer in plain language.',
