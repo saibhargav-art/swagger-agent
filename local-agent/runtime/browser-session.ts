@@ -27,6 +27,11 @@ export type BrowserSignInStatus = {
 export async function getBrowserSignInStatus(
   conversationId: string,
   readPageUrl: (config: BrowserMcpConfig) => Promise<string | null> = readBrowserPageUrl,
+  openPage: (
+    config: BrowserMcpConfig,
+    url: string,
+    options?: { protectedOrigin?: string },
+  ) => Promise<{ pageUrl?: string }> = navigateWithBrowserMcp,
 ): Promise<BrowserSignInStatus> {
   const pending = getPendingSignIn(conversationId)
   if (!pending) return { state: 'none' }
@@ -34,6 +39,23 @@ export async function getBrowserSignInStatus(
   const pageUrl = await currentBrowserPageUrl(pending, readPageUrl)
   if (!pageUrl || !isAuthenticatedCustomerPage(pageUrl, pending)) {
     return { state: 'waiting', ...(pageUrl ? { pageUrl } : {}) }
+  }
+
+  if (!sameUrl(pageUrl, pending.destinationUrl)) {
+    try {
+      const reopened = await openPage(pending.browserConfig, pending.destinationUrl, {
+        protectedOrigin: pending.protectedOrigin,
+      })
+      const destinationPage = reopened.pageUrl ?? pending.destinationUrl
+      if (isAuthenticatedCustomerPage(destinationPage, pending)) {
+        pendingSignIns.delete(conversationId)
+        return { state: 'authenticated', pageUrl: destinationPage }
+      }
+      pending.signInUrl = destinationPage
+      return { state: 'waiting', pageUrl: destinationPage }
+    } catch {
+      return { state: 'waiting', pageUrl }
+    }
   }
 
   pendingSignIns.delete(conversationId)
@@ -62,6 +84,11 @@ export async function handlePendingBrowserMessage(
       stopReason: 'endTurn',
       trace: [],
     }
+  }
+
+  if (!approval && !signInStatus.pageUrl && looksLikeBrowserNavigation(message)) {
+    pendingSignIns.delete(conversationId)
+    return null
   }
 
   if (approval) {
@@ -104,6 +131,63 @@ export function captureBrowserSignIn(
   pendingSignIns.set(conversationId, pending)
   return signInRequiredResult(conversationId, pending, latest.name)
 
+}
+
+export async function openCustomerPageFromChat(
+  config: LocalAgentConfig,
+  input: RunAgentInput,
+): Promise<RunAgentResult | null> {
+  const destinationUrl = resolveRequestedCustomerPage(input)
+  if (!destinationUrl) return null
+
+  const browserConfig = browserConfigFrom(config)
+  if (!browserConfig.browserMcpEnabled || !browserConfig.browserMcpCommand) {
+    return {
+      content: 'Browser automation is not configured for the local agent.',
+      stopReason: 'endTurn',
+      trace: [],
+    }
+  }
+
+  try {
+    const result = await navigateWithBrowserMcp(browserConfig, destinationUrl, {
+      protectedOrigin: input.chatAppUrl,
+    })
+    const trace: AgentTraceStep[] = [{
+      type: 'tool',
+      name: result.toolName,
+      input: { url: destinationUrl },
+      result: result.result,
+      ok: isSuccessfulToolResult(result.result),
+      status: isSuccessfulToolResult(result.result) ? 'success' : 'error',
+    }]
+    const signIn = captureBrowserSignIn(input.conversationId?.trim() || 'default', trace, {
+      ...input,
+      browserStartUrl: destinationUrl,
+    }, config)
+    if (signIn) return signIn
+
+    const navigation = browserNavigationResult(trace)
+    if (navigation) return navigation
+    return {
+      content: `Opened ${destinationUrl} in the managed browser.`,
+      stopReason: 'endTurn',
+      trace,
+    }
+  } catch (error) {
+    return {
+      content: `Browser automation could not open ${destinationUrl}. ${error instanceof Error ? error.message : String(error)}`,
+      stopReason: 'endTurn',
+      trace: [{
+        type: 'tool',
+        name: 'browser_navigate',
+        input: { url: destinationUrl },
+        result: { destination: destinationUrl, state: 'Failed' },
+        ok: false,
+        status: 'error',
+      }],
+    }
+  }
 }
 
 export function browserNavigationResult(trace: AgentTraceStep[]): RunAgentResult | null {
@@ -219,6 +303,50 @@ function signInRequiredResult(
       cancelLabel: 'Cancel',
     },
   }
+}
+
+function resolveRequestedCustomerPage(input: RunAgentInput): string | null {
+  const baseUrl = input.webmcpBaseUrl
+  if (!baseUrl) return null
+
+  const message = input.message.trim()
+  if (!looksLikeBrowserNavigation(message)) return null
+
+  const explicitUrl = message.match(/https?:\/\/[^\s]+/i)?.[0]
+  if (explicitUrl) return explicitUrl
+
+  const pageName = extractRequestedPageName(message)
+  if (!pageName) return input.webmcpLoginUrl ?? baseUrl
+
+  try {
+    return new URL(`/${slugifyPageName(pageName)}`, baseUrl).href
+  } catch {
+    return null
+  }
+}
+
+function looksLikeBrowserNavigation(message: string): boolean {
+  return /\b(?:open|go|goto|navigate|visit|launch|show)\b/i.test(message)
+    && /\b(?:website|site|app|page|url|browser|portal)\b/i.test(message)
+}
+
+function extractRequestedPageName(message: string): string {
+  return message
+    .replace(/https?:\/\/[^\s]+/gi, ' ')
+    .replace(/\b(?:can|could|you|please|open|go|goto|navigate|visit|launch|show|the|a|an|to|connected|customer|website|site|app|portal|url|browser|page|section|for|me)\b/gi, ' ')
+    .replace(/[^\w\s-]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function slugifyPageName(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[_\s]+/g, '-')
+    .replace(/[^a-z0-9-]/g, '')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
 }
 
 function getPendingSignIn(conversationId: string): PendingBrowserSignIn | undefined {

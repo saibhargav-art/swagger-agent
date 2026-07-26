@@ -33,6 +33,16 @@ export interface CustomerAppResult {
   appDescription?: string;
 }
 
+export interface ManagedBrowserStatus {
+  ok?: boolean;
+  enabled: boolean;
+  configured: boolean;
+  connected: boolean;
+  pageUrl?: string;
+  profileDir?: string;
+  error?: string;
+}
+
 export async function connectCustomerApp(input: CustomerAppConnection): Promise<CustomerAppResult> {
   const agentUrl = normalizeServiceUrl(input.agentUrl, 'Agent service URL');
   const baseUrl = normalizeCustomerAppUrl(input.baseUrl);
@@ -118,6 +128,44 @@ export async function testAgentConnection(
   return { agentUrl, message: `${modelLabel} is ready.` };
 }
 
+export async function getManagedBrowserStatus(
+  settings: AgentConnectionSettings,
+): Promise<ManagedBrowserStatus> {
+  const agentUrl = normalizeServiceUrl(settings.agentUrl, 'Agent service URL');
+  return fetchJson<ManagedBrowserStatus>(`${agentUrl}/browser/status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(browserPayload(settings)),
+  });
+}
+
+export async function openManagedBrowser(
+  settings: AgentConnectionSettings,
+  connection: { connectionId?: string; baseUrl?: string; loginUrl?: string },
+): Promise<ManagedBrowserStatus> {
+  const agentUrl = normalizeServiceUrl(settings.agentUrl, 'Agent service URL');
+  return fetchJson<ManagedBrowserStatus>(`${agentUrl}/browser/open`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...browserPayload(settings),
+      customerConnectionId: connection.connectionId || undefined,
+      webmcpBaseUrl: connection.baseUrl || undefined,
+      webmcpLoginUrl: connection.loginUrl || undefined,
+      chatAppUrl: typeof window !== 'undefined' ? window.location.origin : undefined,
+    }),
+  });
+}
+
+export async function resetManagedBrowser(settings: AgentConnectionSettings): Promise<ManagedBrowserStatus> {
+  const agentUrl = normalizeServiceUrl(settings.agentUrl, 'Agent service URL');
+  return fetchJson<ManagedBrowserStatus>(`${agentUrl}/browser/reset`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(browserPayload(settings)),
+  });
+}
+
 export function normalizeCustomerAppUrl(value: string): string {
   const parsed = parseHttpUrl(value, 'Enter the customer app URL that publishes /webapi.json.');
   if (typeof window !== 'undefined' && parsed.origin === window.location.origin) {
@@ -167,6 +215,28 @@ function validateModelSettings(settings: AgentConnectionSettings): void {
   if (settings.browserMcpEnabled && (!settings.browserMcpCommand.trim() || !settings.browserMcpArgs.trim())) {
     throw new Error('Playwright browser automation is enabled but not configured.');
   }
+}
+
+function browserPayload(settings: AgentConnectionSettings) {
+  return {
+    browserMcpEnabled: settings.browserMcpEnabled,
+    browserMcpCommand: settings.browserMcpEnabled ? settings.browserMcpCommand || undefined : undefined,
+    browserMcpArgs: settings.browserMcpEnabled ? parseArgs(settings.browserMcpArgs) : [],
+  };
+}
+
+function parseArgs(value: string): string[] {
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+
+  try {
+    const parsed = JSON.parse(trimmed) as unknown;
+    if (Array.isArray(parsed)) return parsed.map(String);
+  } catch {
+    // Support command-line style args in the UI.
+  }
+
+  return trimmed.match(/(?:[^\s"]+|"[^"]*")+/g)?.map((part) => part.replace(/^"|"$/g, '')) ?? [];
 }
 
 function validateAccessToken(token: string): string | null {

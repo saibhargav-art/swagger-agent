@@ -9,7 +9,7 @@ export class ChatService {
     if (!conversation) return;
 
     for (const message of conversation.messages) {
-      if (message.runtimeConfirmation?.kind === 'browser-login') {
+      if (message.runtimeConfirmation) {
         updateMessage(conversationId, message.id, { runtimeConfirmation: undefined });
       }
     }

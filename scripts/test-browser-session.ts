@@ -7,6 +7,7 @@ import {
   clearBrowserSessions,
   getBrowserSignInStatus,
   handlePendingBrowserMessage,
+  openCustomerPageFromChat,
 } from '../local-agent/runtime/browser-session.js'
 import type { AgentTraceStep } from '../local-agent/runtime/types.js'
 
@@ -64,13 +65,44 @@ try {
   )
   assert.equal(stillWaiting?.confirmationRequired?.kind, 'browser-login')
 
-  const liveStatus = await getBrowserSignInStatus('unfinished-login', async () => ordersUrl)
+  captureBrowserSignIn(
+    'closed-browser',
+    [navigationStep(loginUrl)],
+    { message: 'open orders', webmcpLoginUrl: loginUrl },
+    config,
+  )
+  const freshRetry = await handlePendingBrowserMessage(
+    'closed-browser',
+    'open connected website orders page',
+    async () => null,
+  )
+  assert.equal(freshRetry, null, 'A fresh navigation request must recover from a closed managed browser.')
+
+  const liveStatus = await getBrowserSignInStatus(
+    'unfinished-login',
+    async () => 'http://localhost:5174/dashboard',
+    async (_config, url) => ({ pageUrl: url }),
+  )
   assert.deepEqual(liveStatus, { state: 'authenticated', pageUrl: ordersUrl })
   const resolvedStatus = await getBrowserSignInStatus('unfinished-login', async () => ordersUrl)
   assert.deepEqual(resolvedStatus, { state: 'none' })
 
   const completed = browserNavigationResult([navigationStep(ordersUrl)])
   assert.equal(completed?.content, `Opened ${ordersUrl} in the managed browser.`)
+
+  const directNavigation = await openCustomerPageFromChat(
+    {
+      ...config,
+      browserMcpEnabled: false,
+      browserMcpCommand: undefined,
+    },
+    {
+      message: 'can you open connected website orders page',
+      webmcpBaseUrl: 'http://localhost:5174',
+      webmcpLoginUrl: loginUrl,
+    },
+  )
+  assert.equal(directNavigation?.content, 'Browser automation is not configured for the local agent.')
 
   console.log('Browser session regression tests passed.')
 } finally {

@@ -1,5 +1,6 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { rm } from 'node:fs/promises'
 
 import { McpClient } from '@strands-agents/sdk'
 import type { JSONValue } from '@strands-agents/sdk'
@@ -18,6 +19,15 @@ export type McpServerDiagnostic = {
   configured: boolean
   connected: boolean
   tools: string[]
+  error?: string
+}
+
+export type BrowserSessionDiagnostic = {
+  enabled: boolean
+  configured: boolean
+  connected: boolean
+  pageUrl?: string
+  profileDir?: string
   error?: string
 }
 
@@ -127,6 +137,42 @@ export async function readBrowserPageUrl(config: BrowserMcpConfig): Promise<stri
 
   await resetManagedClient('browser-mcp')
   return performBrowserPageRead(config)
+}
+
+export async function inspectBrowserSession(config: BrowserMcpConfig): Promise<BrowserSessionDiagnostic> {
+  const profileDir = browserProfileDir(config)
+  if (!config.browserMcpEnabled) {
+    return { enabled: false, configured: Boolean(config.browserMcpCommand), connected: false, profileDir }
+  }
+  if (!config.browserMcpCommand) {
+    return { enabled: true, configured: false, connected: false, profileDir, error: 'Managed browser is not configured.' }
+  }
+
+  try {
+    const pageUrl = await readBrowserPageUrl(config)
+    return {
+      enabled: true,
+      configured: true,
+      connected: Boolean(pageUrl),
+      ...(pageUrl ? { pageUrl } : {}),
+      profileDir,
+    }
+  } catch (error) {
+    return {
+      enabled: true,
+      configured: true,
+      connected: false,
+      profileDir,
+      error: error instanceof Error ? error.message : String(error),
+    }
+  }
+}
+
+export async function resetBrowserSession(config: BrowserMcpConfig): Promise<BrowserSessionDiagnostic> {
+  await resetManagedClient('browser-mcp')
+  const profileDir = browserProfileDir(config)
+  if (profileDir) await rm(profileDir, { recursive: true, force: true }).catch(() => undefined)
+  return inspectBrowserSession(config)
 }
 
 async function performBrowserPageRead(config: BrowserMcpConfig): Promise<string | null> {
@@ -318,11 +364,20 @@ function normalizeBrowserArgs(args: string[]): string[] {
   const normalized = [...args]
   const runtimeHome = join(homedir(), '.swagger-agent')
   if (!normalized.includes('--browser')) normalized.push('--browser', 'chrome')
+  if (!normalized.includes('--shared-browser-context')) normalized.push('--shared-browser-context')
+  if (!normalized.includes('--save-session')) normalized.push('--save-session')
   if (!normalized.includes('--user-data-dir') && !normalized.includes('--isolated') && !normalized.includes('--extension')) {
     normalized.push('--user-data-dir', join(runtimeHome, 'playwright-profile'))
   }
   if (!normalized.includes('--output-dir')) normalized.push('--output-dir', join(runtimeHome, 'playwright-output'))
   return normalized
+}
+
+function browserProfileDir(config: BrowserMcpConfig): string | undefined {
+  if (!config.browserMcpArgs.some((arg) => arg.includes('@playwright/mcp'))) return undefined
+  const index = config.browserMcpArgs.indexOf('--user-data-dir')
+  if (index >= 0 && config.browserMcpArgs[index + 1]) return config.browserMcpArgs[index + 1]
+  return join(homedir(), '.swagger-agent', 'playwright-profile')
 }
 
 function getManagedClient(name: string, command: string, args: string[]): McpClient {

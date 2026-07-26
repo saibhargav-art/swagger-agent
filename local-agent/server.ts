@@ -10,7 +10,12 @@ import {
 import { releaseCustomerConnection, resolvePendingAction, runAgent, shutdownAgents } from './agent-runtime.js'
 import { getBrowserSignInStatus } from './runtime/browser-session.js'
 import type { RunAgentInput } from './runtime/types.js'
-import { inspectMcpServers } from './tools/mcp-clients.js'
+import {
+  inspectBrowserSession,
+  inspectMcpServers,
+  navigateWithBrowserMcp,
+  resetBrowserSession,
+} from './tools/mcp-clients.js'
 
 const config = readConfig([])
 const port = Number(process.env.STRANDS_AGENT_PORT ?? 8787)
@@ -148,6 +153,51 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
+  if (req.method === 'POST' && req.url === '/browser/status') {
+    try {
+      const body = await readJson<RunAgentInput>(req)
+      const result = await inspectBrowserSession(resolveBrowserConfig(body))
+      sendJson(res, 200, { ok: true, ...result })
+    } catch (err) {
+      sendJson(res, 500, { ok: false, error: err instanceof Error ? err.message : 'Browser status check failed' })
+    }
+    return
+  }
+
+  if (req.method === 'POST' && req.url === '/browser/open') {
+    try {
+      const body = await readJson<RunAgentInput & { targetUrl?: string }>(req)
+      const targetUrl = body.targetUrl ?? browserHomeUrl(body)
+      if (!targetUrl) {
+        sendJson(res, 400, { ok: false, error: 'Connect a customer app before opening the managed browser.' })
+        return
+      }
+      const result = await navigateWithBrowserMcp(resolveBrowserConfig(body), targetUrl, {
+        protectedOrigin: body.chatAppUrl,
+      })
+      sendJson(res, 200, {
+        ok: true,
+        pageUrl: result.pageUrl ?? targetUrl,
+        toolName: result.toolName,
+        result: result.result,
+      })
+    } catch (err) {
+      sendJson(res, 500, { ok: false, error: err instanceof Error ? err.message : 'Managed browser open failed' })
+    }
+    return
+  }
+
+  if (req.method === 'POST' && req.url === '/browser/reset') {
+    try {
+      const body = await readJson<RunAgentInput>(req)
+      const result = await resetBrowserSession(resolveBrowserConfig(body))
+      sendJson(res, 200, { ok: true, ...result })
+    } catch (err) {
+      sendJson(res, 500, { ok: false, error: err instanceof Error ? err.message : 'Managed browser reset failed' })
+    }
+    return
+  }
+
   if (req.method === 'POST' && req.url === '/model-health') {
     try {
       const body = await readJson<{
@@ -262,6 +312,22 @@ function resolveCustomerConnection(input: RunAgentInput): RunAgentInput {
     webmcpBearerToken: connection.bearerToken,
     allowWebMcpWrites: false,
   }
+}
+
+function resolveBrowserConfig(input: RunAgentInput) {
+  return {
+    browserMcpEnabled: input.browserMcpEnabled ?? config.browserMcpEnabled,
+    browserMcpCommand: input.browserMcpCommand ?? config.browserMcpCommand,
+    browserMcpArgs: input.browserMcpArgs ?? config.browserMcpArgs,
+  }
+}
+
+function browserHomeUrl(input: RunAgentInput): string | undefined {
+  if (input.customerConnectionId) {
+    const connection = getCustomerConnection(input.customerConnectionId)
+    return connection.loginUrl ?? connection.baseUrl
+  }
+  return input.webmcpLoginUrl ?? input.browserStartUrl ?? input.webmcpBaseUrl
 }
 
 function isLoopback(address: string | undefined): boolean {

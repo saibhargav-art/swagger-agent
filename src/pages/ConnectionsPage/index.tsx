@@ -4,6 +4,7 @@ import { AgentConnectionCard } from '@/components/connections/AgentConnectionCar
 import { ConnectionBadge } from '@/components/connections/ConnectionCard';
 import { CustomerAppConnectionCard } from '@/components/connections/CustomerAppConnectionCard';
 import { DiscoveredToolsSection } from '@/components/connections/DiscoveredToolsSection';
+import { ManagedBrowserPanel } from '@/components/connections/ManagedBrowserPanel';
 import { Button } from '@/components/ui/Button';
 import { useConnections } from '@/hooks/useConnections';
 import { useTools } from '@/hooks/useTools';
@@ -67,6 +68,17 @@ export default function ConnectionsPage() {
           signInUrl={connection.signInUrl}
           onSignInUrlChange={connection.setSignInUrl}
         />
+
+        <div className="py-5">
+          <ManagedBrowserPanel
+            status={connection.browserStatus}
+            busy={connection.browserBusy}
+            canOpen={Boolean(connection.customer.connectionId || connection.customerUrl.trim())}
+            onOpen={() => void connection.openBrowser()}
+            onCheck={() => void connection.checkBrowser()}
+            onReset={() => void connection.resetBrowser()}
+          />
+        </div>
 
         <DiscoveredToolsSection
           tools={tools}

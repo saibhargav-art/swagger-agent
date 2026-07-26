@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
-import { connectCustomerApp, disconnectCustomerApp, testAgentConnection } from '@/services/connections/ConnectionService';
+import {
+  connectCustomerApp,
+  disconnectCustomerApp,
+  getManagedBrowserStatus,
+  openManagedBrowser,
+  resetManagedBrowser,
+  testAgentConnection,
+  type ManagedBrowserStatus,
+} from '@/services/connections/ConnectionService';
 import { useAgentRuntimeStore } from '@/store/agentRuntimeStore';
 import { useToolStore } from '@/store/toolStore';
 import { useWebMCPStore } from '@/store/webMCPStore';
@@ -12,6 +20,8 @@ export function useConnections() {
   const [signInUrl, setSignInUrl] = useState(customer.loginUrl);
   const [accessToken, setAccessToken] = useState(customer.bearerToken);
   const [connectingAll, setConnectingAll] = useState(false);
+  const [browserStatus, setBrowserStatus] = useState<ManagedBrowserStatus | null>(null);
+  const [browserBusy, setBrowserBusy] = useState(false);
 
   useEffect(() => setCustomerUrl(customer.baseUrl), [customer.baseUrl]);
   useEffect(() => setSignInUrl(customer.loginUrl), [customer.loginUrl]);
@@ -77,6 +87,58 @@ export function useConnections() {
 
   const disconnectAgent = useCallback(() => agent.disconnect(), [agent]);
 
+  const checkBrowser = useCallback(async () => {
+    setBrowserBusy(true);
+    try {
+      setBrowserStatus(await getManagedBrowserStatus(agent));
+    } catch (error) {
+      setBrowserStatus({
+        enabled: agent.browserMcpEnabled,
+        configured: Boolean(agent.browserMcpCommand),
+        connected: false,
+        error: error instanceof Error ? error.message : 'Could not check the managed browser.',
+      });
+    } finally {
+      setBrowserBusy(false);
+    }
+  }, [agent]);
+
+  const openBrowser = useCallback(async () => {
+    setBrowserBusy(true);
+    try {
+      setBrowserStatus(await openManagedBrowser(agent, {
+        connectionId: customer.connectionId,
+        baseUrl: customer.baseUrl || customerUrl,
+        loginUrl: customer.loginUrl || signInUrl,
+      }));
+    } catch (error) {
+      setBrowserStatus({
+        enabled: agent.browserMcpEnabled,
+        configured: Boolean(agent.browserMcpCommand),
+        connected: false,
+        error: error instanceof Error ? error.message : 'Could not open the managed browser.',
+      });
+    } finally {
+      setBrowserBusy(false);
+    }
+  }, [agent, customer.baseUrl, customer.connectionId, customer.loginUrl, customerUrl, signInUrl]);
+
+  const resetBrowser = useCallback(async () => {
+    setBrowserBusy(true);
+    try {
+      setBrowserStatus(await resetManagedBrowser(agent));
+    } catch (error) {
+      setBrowserStatus({
+        enabled: agent.browserMcpEnabled,
+        configured: Boolean(agent.browserMcpCommand),
+        connected: false,
+        error: error instanceof Error ? error.message : 'Could not reset the managed browser.',
+      });
+    } finally {
+      setBrowserBusy(false);
+    }
+  }, [agent]);
+
   const disconnectWebsite = useCallback(async () => {
     const connectionId = customer.connectionId;
     customer.disconnect();
@@ -100,10 +162,15 @@ export function useConnections() {
     accessToken,
     setAccessToken,
     connectingAll,
+    browserStatus,
+    browserBusy,
     connectAgent,
     connectWebsite,
     connectAll,
     disconnectAgent,
     disconnectWebsite,
+    checkBrowser,
+    openBrowser,
+    resetBrowser,
   };
 }

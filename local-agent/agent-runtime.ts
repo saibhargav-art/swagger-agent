@@ -34,6 +34,7 @@ import {
   captureBrowserSignIn,
   clearBrowserSessions,
   handlePendingBrowserMessage,
+  openCustomerPageFromChat,
   resolvePendingBrowserSignIn,
 } from './runtime/browser-session.js'
 import { isApproval, isCancellation } from './runtime/confirmation.js'
@@ -66,6 +67,12 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
   const effectiveConfig = mergeRuntimeConfig(config, input)
   const pendingBrowserResult = await handlePendingBrowserMessage(conversationId, input.message)
   if (pendingBrowserResult) return pendingBrowserResult
+
+  const browserPageResult = await openCustomerPageFromChat(effectiveConfig, {
+    ...input,
+    conversationId,
+  })
+  if (browserPageResult) return browserPageResult
 
   if (hasPendingWebMcpWrite(conversationId)) {
     if (isCancellation(input.message)) {

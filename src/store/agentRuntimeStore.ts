@@ -5,7 +5,7 @@ import type { ConnectionStatus } from '@/types/connection';
 export type StrandsModelProvider = 'ollama' | 'openai' | 'bedrock';
 
 const DEFAULT_BROWSER_MCP_COMMAND = 'npx';
-const DEFAULT_BROWSER_MCP_ARGS = '--no-install @playwright/mcp --browser chrome';
+const DEFAULT_BROWSER_MCP_ARGS = '--no-install @playwright/mcp --browser chrome --shared-browser-context --save-session';
 
 interface AgentRuntimeState {
   agentUrl: string;
