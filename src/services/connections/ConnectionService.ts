@@ -47,7 +47,7 @@ export interface ManagedBrowserStatus {
 export async function connectCustomerApp(input: CustomerAppConnection): Promise<CustomerAppResult> {
   const agentUrl = normalizeServiceUrl(input.agentUrl, 'Agent service URL');
   const baseUrl = normalizeCustomerAppUrl(input.baseUrl);
-  const loginUrl = normalizeOptionalUrl(input.loginUrl, 'Sign-in URL');
+  const loginUrl = normalizeOptionalUrl(input.loginUrl, 'Login page URL');
   const bearerToken = normalizeAccessToken(input.bearerToken);
   const tokenError = validateAccessToken(bearerToken);
   if (tokenError) throw new Error(tokenError);
@@ -170,7 +170,7 @@ export async function resetManagedBrowser(settings: AgentConnectionSettings): Pr
 }
 
 export function normalizeCustomerAppUrl(value: string): string {
-  const parsed = parseHttpUrl(value, 'Enter the customer app URL that publishes /webapi.json.');
+  const parsed = parseHttpUrl(value, 'Enter the customer app base URL.');
   if (typeof window !== 'undefined' && parsed.origin === window.location.origin) {
     throw new Error('Enter the customer application URL, not this chat application URL.');
   }
@@ -178,7 +178,7 @@ export function normalizeCustomerAppUrl(value: string): string {
   const lowerPath = parsed.pathname.toLowerCase();
   if (lowerPath.endsWith('.json')) {
     if (!lowerPath.endsWith('/webapi.json')) {
-      throw new Error('Enter the customer app URL or its /webapi.json URL.');
+      throw new Error('Enter the customer app base URL or a supported entry URL.');
     }
     parsed.pathname = parsed.pathname.slice(0, -'/webapi.json'.length) || '/';
   }

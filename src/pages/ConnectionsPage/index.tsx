@@ -25,7 +25,9 @@ export default function ConnectionsPage() {
         <header className="flex flex-col gap-4 border-b border-slate-200 pb-5 sm:flex-row sm:items-end sm:justify-between">
           <div className="min-w-0">
             <h1 className="text-xl font-semibold text-slate-950">Connections</h1>
-            <p className="mt-1 text-sm text-slate-500">Connect one local agent and one customer application.</p>
+            <p className="mt-1 text-sm text-slate-500">
+              Connect the local agent, then connect a customer app that registers WebMCP tools.
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <ConnectionBadge status={connection.agent.status} prefix="Agent" />
@@ -55,8 +57,10 @@ export default function ConnectionsPage() {
             message={connection.customer.error}
             toolCount={connection.customer.toolCount}
             url={connection.customerUrl}
+            loginUrl={connection.loginUrl}
             token={connection.accessToken}
             onUrlChange={connection.setCustomerUrl}
+            onLoginUrlChange={connection.setLoginUrl}
             onTokenChange={connection.setAccessToken}
             onConnect={() => void connection.connectWebsite()}
             onDisconnect={connection.disconnectWebsite}
@@ -65,8 +69,6 @@ export default function ConnectionsPage() {
 
         <AdvancedConnectionSettings
           agent={connection.agent}
-          signInUrl={connection.signInUrl}
-          onSignInUrlChange={connection.setSignInUrl}
         />
 
         <div className="py-5">

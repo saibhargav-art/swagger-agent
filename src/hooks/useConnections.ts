@@ -17,14 +17,14 @@ export function useConnections() {
   const customer = useWebMCPStore();
   const { setTools, setLoading: setToolsLoading, setError: setToolsError } = useToolStore();
   const [customerUrl, setCustomerUrl] = useState(customer.baseUrl);
-  const [signInUrl, setSignInUrl] = useState(customer.loginUrl);
+  const [loginUrl, setLoginUrl] = useState(customer.loginUrl);
   const [accessToken, setAccessToken] = useState(customer.bearerToken);
   const [connectingAll, setConnectingAll] = useState(false);
   const [browserStatus, setBrowserStatus] = useState<ManagedBrowserStatus | null>(null);
   const [browserBusy, setBrowserBusy] = useState(false);
 
   useEffect(() => setCustomerUrl(customer.baseUrl), [customer.baseUrl]);
-  useEffect(() => setSignInUrl(customer.loginUrl), [customer.loginUrl]);
+  useEffect(() => setLoginUrl(customer.loginUrl), [customer.loginUrl]);
   useEffect(() => setAccessToken(customer.bearerToken), [customer.bearerToken]);
 
   const connectAgent = useCallback(async (): Promise<boolean> => {
@@ -49,7 +49,7 @@ export function useConnections() {
       const result = await connectCustomerApp({
         agentUrl: agent.agentUrl,
         baseUrl: customerUrl,
-        loginUrl: signInUrl,
+        loginUrl,
         bearerToken: accessToken,
       });
       customer.setBaseUrl(result.baseUrl);
@@ -73,7 +73,7 @@ export function useConnections() {
     } finally {
       setToolsLoading(false);
     }
-  }, [accessToken, agent.agentUrl, customer, customerUrl, setTools, setToolsError, setToolsLoading, signInUrl]);
+  }, [accessToken, agent.agentUrl, customer, customerUrl, loginUrl, setTools, setToolsError, setToolsLoading]);
 
   const connectAll = useCallback(async () => {
     setConnectingAll(true);
@@ -109,7 +109,7 @@ export function useConnections() {
       setBrowserStatus(await openManagedBrowser(agent, {
         connectionId: customer.connectionId,
         baseUrl: customer.baseUrl || customerUrl,
-        loginUrl: customer.loginUrl || signInUrl,
+        loginUrl: customer.loginUrl || loginUrl,
       }));
     } catch (error) {
       setBrowserStatus({
@@ -121,7 +121,7 @@ export function useConnections() {
     } finally {
       setBrowserBusy(false);
     }
-  }, [agent, customer.baseUrl, customer.connectionId, customer.loginUrl, customerUrl, signInUrl]);
+  }, [agent, customer.baseUrl, customer.connectionId, customer.loginUrl, customerUrl, loginUrl]);
 
   const resetBrowser = useCallback(async () => {
     setBrowserBusy(true);
@@ -145,7 +145,7 @@ export function useConnections() {
     setTools([]);
     setToolsError(null);
     setCustomerUrl('');
-    setSignInUrl('');
+    setLoginUrl('');
     setAccessToken('');
     if (connectionId) {
       await disconnectCustomerApp(agent.agentUrl, connectionId).catch(() => undefined);
@@ -157,8 +157,8 @@ export function useConnections() {
     customer,
     customerUrl,
     setCustomerUrl,
-    signInUrl,
-    setSignInUrl,
+    loginUrl,
+    setLoginUrl,
     accessToken,
     setAccessToken,
     connectingAll,

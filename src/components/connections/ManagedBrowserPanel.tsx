@@ -33,7 +33,7 @@ export function ManagedBrowserPanel({
             </span>
           </div>
           <p className="mt-1 text-xs leading-5 text-slate-500">
-            Desktop browser session used by the local agent for login and UI-only actions.
+            Dedicated desktop browser session used by the local agent for login, OTP, and UI-only actions.
           </p>
           {status?.pageUrl ? (
             <p className="mt-2 truncate text-xs text-slate-600" title={status.pageUrl}>

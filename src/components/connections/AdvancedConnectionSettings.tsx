@@ -8,11 +8,9 @@ type AgentState = ReturnType<typeof useAgentRuntimeStore.getState>;
 
 interface Props {
   agent: AgentState;
-  signInUrl: string;
-  onSignInUrlChange: (value: string) => void;
 }
 
-export function AdvancedConnectionSettings({ agent, signInUrl, onSignInUrlChange }: Props) {
+export function AdvancedConnectionSettings({ agent }: Props) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -26,7 +24,7 @@ export function AdvancedConnectionSettings({ agent, signInUrl, onSignInUrlChange
         <Settings2 size={17} className="shrink-0 text-slate-500" />
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-semibold text-slate-800">Advanced settings</span>
-          <span className="mt-0.5 block text-xs text-slate-500">Service endpoints, browser automation, and sign-in route</span>
+          <span className="mt-0.5 block text-xs text-slate-500">Agent runtime, managed browser, and model settings</span>
         </span>
         <ChevronDown size={17} className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
@@ -45,18 +43,10 @@ export function AdvancedConnectionSettings({ agent, signInUrl, onSignInUrlChange
           </div>
 
           <div className="grid content-start gap-4">
-            <Field label="Customer sign-in URL" hint="Optional">
-              <Input
-                type="url"
-                value={signInUrl}
-                placeholder="https://customer-app.com/login"
-                onChange={(event) => onSignInUrlChange(event.target.value)}
-              />
-            </Field>
             <label className="flex items-start justify-between gap-4 rounded-md border border-slate-200 bg-white px-3 py-3">
               <span>
                 <span className="block text-sm font-medium text-slate-800">Managed browser</span>
-                <span className="mt-0.5 block text-xs leading-5 text-slate-500">Starts only when needed and keeps website sign-in between requests</span>
+                <span className="mt-0.5 block text-xs leading-5 text-slate-500">Separate desktop session for login, OTP, and UI-only actions</span>
               </span>
               <input
                 type="checkbox"
