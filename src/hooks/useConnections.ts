@@ -57,7 +57,7 @@ export function useConnections() {
       customer.setBearerToken(result.bearerToken);
       customer.setConnectionId(result.connectionId);
       customer.setToolCount(result.tools.length);
-      customer.setAppInfo({ name: result.appName, description: result.appDescription });
+      customer.setAppInfo({ name: result.appName, description: result.appDescription, uiHints: result.uiHints });
       setTools(result.tools);
       customer.setStatus('connected');
       customer.setError(null);

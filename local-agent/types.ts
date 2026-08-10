@@ -16,6 +16,20 @@ export type OpenApiDocument = {
     schemas?: Record<string, JSONSchema>
   }
   'x-webmcp-headers'?: Record<string, string>
+  'x-webmcp-ui'?: WebMcpUiHints
+}
+
+export type WebMcpUiHints = {
+  routes?: Record<string, string>
+  actions?: Record<string, WebMcpUiActionHint>
+}
+
+export type WebMcpUiActionHint = {
+  route?: string
+  page?: string
+  fields?: Record<string, string[]>
+  submit?: string[]
+  notes?: string
 }
 
 export type OpenApiOperation = {

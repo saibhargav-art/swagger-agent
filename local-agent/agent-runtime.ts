@@ -9,7 +9,9 @@ import {
 import { OpenAIModel } from '@strands-agents/sdk/models/openai'
 
 import {
+  callBrowserMcpTool,
   createMcpTools,
+  navigateWithBrowserMcp,
   shutdownMcpClients,
 } from './tools/mcp-clients.js'
 import {
@@ -40,12 +42,14 @@ import {
 import { isApproval, isCancellation } from './runtime/confirmation.js'
 import { classifyExecution, type ExecutionPlan } from './runtime/execution-mode.js'
 import type {
+  AgentTraceStep,
   ConfirmPendingActionInput,
   RunAgentInput,
   RunAgentResult,
 } from './runtime/types.js'
 import {
   expandSelectionForExecutionMode,
+  isBrowserToolName,
   toolsForExecutionMode,
 } from './runtime/tool-policy.js'
 import { ToolPlanner } from './runtime/tool-planner.js'
@@ -68,6 +72,14 @@ const MAX_HISTORY_MESSAGES = Number(process.env.STRANDS_MAX_HISTORY_MESSAGES ?? 
 const browserNavigationInvocations = new WeakSet<object>()
 
 export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): Promise<RunAgentResult> {
+  return runAgentAttempt(config, input, false)
+}
+
+async function runAgentAttempt(
+  config: LocalAgentConfig,
+  input: RunAgentInput,
+  recoveredBrowserRuntime: boolean,
+): Promise<RunAgentResult> {
   const conversationId = input.conversationId?.trim() || 'default'
   const effectiveConfig = mergeRuntimeConfig(config, input)
   const pendingBrowserResult = await handlePendingBrowserMessage(conversationId, input.message)
@@ -121,6 +133,7 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
     recentConversationText(entry.agent),
   )
   expandSelectionForExecutionMode(selection, entry.availableTools, executionPlan)
+  const preflightTrace = await browserWorkflowPreflight(effectiveConfig, input, executionPlan)
   entry.agent.toolRegistry.clear()
   if (selection.tools.length > 0) entry.agent.toolRegistry.add(selection.tools)
   entry.selectedToolNames = selection.names
@@ -133,10 +146,11 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
     input,
     selection.names,
     executionPlan,
+    preflightTrace,
   ), {
     invocationState: {
       plannedToolNames: selection.names,
-      forcePlannedTool: selection.names.length > 0,
+      forcePlannedTool: selection.names.length > 0 && preflightTrace.length === 0,
       pureBrowserNavigation: executionPlan.pureBrowserNavigation,
     },
     limits: {
@@ -145,7 +159,7 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
     },
   })
   const content = result.toString().trim()
-  const trace = extractTrace(agent.messages.slice(beforeMessageCount))
+  const trace = [...preflightTrace, ...extractTrace(agent.messages.slice(beforeMessageCount))]
   const browserSignInResult = captureBrowserSignIn(conversationId, trace, input, effectiveConfig)
   if (browserSignInResult) return browserSignInResult
   const completedBrowserNavigation = executionPlan.pureBrowserNavigation ? browserNavigationResult(trace) : null
@@ -170,6 +184,11 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
   }
   const failedTool = trace.find((step) => !step.ok)
   if (failedTool) {
+    if (!recoveredBrowserRuntime && isRecoverableBrowserRuntimeFailure(failedTool)) {
+      await recoverBrowserRuntime(conversationId)
+      return runAgentAttempt(config, input, true)
+    }
+
     return {
       content: summarizeToolFailure(failedTool.result),
       stopReason: result.stopReason,
@@ -191,6 +210,18 @@ export async function runAgent(config: LocalAgentConfig, input: RunAgentInput): 
     stopReason: result.stopReason,
     trace,
   }
+}
+
+async function recoverBrowserRuntime(conversationId: string): Promise<void> {
+  await shutdownMcpClients()
+  for (const key of agents.keys()) {
+    if (key === conversationId || key.startsWith(`${conversationId}|`)) agents.delete(key)
+  }
+}
+
+function isRecoverableBrowserRuntimeFailure(step: { name: string; result?: unknown }): boolean {
+  if (!isBrowserToolName(step.name)) return false
+  return /target page|browser context|browser has been closed|browserbackend\.calltool/i.test(toolResultText(step.result))
 }
 
 export async function resolvePendingAction(
@@ -360,8 +391,8 @@ async function getOrCreateAgent(
     systemPrompt: systemPrompt(),
   })
 
-  // Enforce the model-selected first step. Later turns remain agentic so the
-  // model can inspect results, call another planned tool, or answer the user.
+  // Enforce only the runtime-required setup. For browser UI workflows this
+  // means open the page and snapshot it before any selector-based action.
   agent.addMiddleware(InvokeModelStage.Input, async (context) => {
     const plannedToolNames = Array.isArray(context.invocationState.plannedToolNames)
       ? context.invocationState.plannedToolNames.filter((name): name is string => typeof name === 'string')
@@ -533,12 +564,15 @@ function withRuntimeContext(
   input: RunAgentInput,
   plannedToolNames: string[],
   executionPlan: ExecutionPlan,
+  preflightTrace: RunAgentResult['trace'] = [],
 ): string {
   const browserEnabled = config.browserMcpEnabled && Boolean(config.browserMcpCommand)
   const context = [
     input.webmcpBaseUrl ? `Connected website base URL: ${input.webmcpBaseUrl}.` : '',
     input.webmcpLoginUrl ? `Customer login URL: ${input.webmcpLoginUrl}.` : '',
     input.browserStartUrl ? `Browser start URL: ${input.browserStartUrl}.` : '',
+    webMcpUiHintsContext(input.webmcpUiHints),
+    browserPreflightContext(preflightTrace),
     `Execution mode: ${executionPlan.mode}.`,
     browserEnabled
       ? 'Browser MCP is available for visible browser actions.'
@@ -549,6 +583,118 @@ function withRuntimeContext(
   ].filter(Boolean).join(' ')
 
   return context ? `${message}\n\nRuntime context:\n${context}` : message
+}
+
+async function browserWorkflowPreflight(
+  config: LocalAgentConfig,
+  input: RunAgentInput,
+  executionPlan: ExecutionPlan,
+): Promise<AgentTraceStep[]> {
+  if (!executionPlan.browserWorkflow) return []
+  if (!config.browserMcpEnabled || !config.browserMcpCommand || !input.webmcpBaseUrl) return []
+
+  const destination = browserWorkflowStartUrl(input)
+  if (!destination) return []
+
+  const trace: AgentTraceStep[] = []
+  try {
+    const navigation = await navigateWithBrowserMcp(config, destination, { protectedOrigin: input.chatAppUrl })
+    trace.push({
+      type: 'tool',
+      name: navigation.toolName,
+      input: { url: destination },
+      result: navigation.result,
+      ok: isSuccessfulToolResult(navigation.result),
+      status: isSuccessfulToolResult(navigation.result) ? 'success' : 'error',
+    })
+    if (!isSuccessfulToolResult(navigation.result)) return trace
+
+    const snapshot = await callBrowserMcpTool(config, 'browser_snapshot')
+    trace.push({
+      type: 'tool',
+      name: 'browser_snapshot',
+      input: {},
+      result: snapshot,
+      ok: isSuccessfulToolResult(snapshot),
+      status: isSuccessfulToolResult(snapshot) ? 'success' : 'error',
+    })
+  } catch (error) {
+    trace.push({
+      type: 'tool',
+      name: 'browser_preflight',
+      input: { url: destination },
+      result: error instanceof Error ? error.message : String(error),
+      ok: false,
+      status: 'error',
+    })
+  }
+
+  return trace
+}
+
+function browserWorkflowStartUrl(input: RunAgentInput): string | null {
+  const baseUrl = input.webmcpBaseUrl
+  if (!baseUrl) return null
+
+  const route = matchingUiActionRoute(input) ?? matchingUiRoute(input) ?? '/'
+  try {
+    return new URL(route, `${baseUrl.replace(/\/$/, '')}/`).href
+  } catch {
+    return baseUrl
+  }
+}
+
+function matchingUiActionRoute(input: RunAgentInput): string | null {
+  const actions = input.webmcpUiHints?.actions
+  if (!actions) return null
+  const message = normalizeText(input.message)
+
+  for (const [name, hint] of Object.entries(actions)) {
+    const actionText = normalizeText(`${name} ${JSON.stringify(hint)}`)
+    if (messageWords(message).some((word) => actionText.includes(word))) {
+      return hint.route ?? hint.page ?? null
+    }
+  }
+
+  return null
+}
+
+function matchingUiRoute(input: RunAgentInput): string | null {
+  const routes = input.webmcpUiHints?.routes
+  if (!routes) return null
+  const message = normalizeText(input.message)
+
+  for (const [name, route] of Object.entries(routes)) {
+    if (message.includes(normalizeText(name))) return route
+  }
+
+  return null
+}
+
+function browserPreflightContext(trace: AgentTraceStep[] = []): string {
+  if (trace.length === 0) return ''
+  const summary = trace
+    .map((step) => `${step.name}: ${step.ok ? 'ok' : 'failed'} ${toolResultText(step.result).slice(0, 1200)}`)
+    .join('\n')
+  return `Browser preflight already ran before model execution. Current browser state:\n${summary}`
+}
+
+function normalizeText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+function messageWords(value: string): string[] {
+  return value.split(/\s+/).filter((word) => word.length >= 4)
+}
+
+function webMcpUiHintsContext(uiHints: RunAgentInput['webmcpUiHints']): string {
+  if (!uiHints) return ''
+  const compact = JSON.stringify(uiHints)
+  if (!compact || compact === '{}') return ''
+  return [
+    `Customer UI hints from /webapi.json: ${compact.slice(0, 3000)}.`,
+    'Use UI hints as starting points for browser automation, then verify the visible page with browser_snapshot before interacting.',
+  ].join(' ')
 }
 
 function recentConversationText(agent: Agent): string {
@@ -590,6 +736,9 @@ function systemPrompt(): string {
     'Use WebMCP API tools for customer app data/actions when available.',
     'Use Browser MCP when the user asks to open the site, navigate pages, click/type in the UI, inspect visible page state, or handle login/OTP/browser-only interaction.',
     'If Browser MCP is available and the user asks to use the website UI, open the connected website/login URL first, inspect the visible page, navigate through visible links or controls, then complete the requested UI action.',
+    'For browser UI actions, never fill, type, select, press, or click a guessed selector before a browser snapshot confirms the matching visible control exists.',
+    'If the requested control is not visible after opening the connected website, use the snapshot to navigate through visible links or menus to the correct page before interacting.',
+    'When /webapi.json provides UI hints, use hinted routes, field labels, and submit labels as generic guidance for browser workflows, but still verify the visible page before action.',
     'When the user says to do something from there, through the website, in the UI, or instead of tools, do not stop after opening the site; continue with browser inspection/click/type actions until the task is completed or blocked.',
     'For browser navigation, start from the connected website URL and derive or discover routes from the request and visible page; do not rely on application-specific route names.',
     'Prefer WebMCP API tools over browser clicking for direct data actions unless the user specifically asks to use the website UI or no API tool is available.',

@@ -163,6 +163,7 @@ function buildRequestPayload(
     webmcpBaseUrl: connection.baseUrl || undefined,
     webmcpLoginUrl: connection.loginUrl || undefined,
     webmcpBearerToken: connection.bearerToken || undefined,
+    webmcpUiHints: connection.uiHints || undefined,
     chatAppUrl: typeof window !== 'undefined' ? window.location.origin : undefined,
   }
 }
@@ -181,6 +182,7 @@ function buildConfirmPayload(
     webmcpBaseUrl: connection.baseUrl || undefined,
     webmcpLoginUrl: connection.loginUrl || undefined,
     webmcpBearerToken: connection.bearerToken || undefined,
+    webmcpUiHints: connection.uiHints || undefined,
   }
 }
 
@@ -232,7 +234,7 @@ async function restoreCustomerConnection(agentUrl: string): Promise<void> {
     })
     connection.setConnectionId(result.connectionId)
     connection.setToolCount(result.tools.length)
-    connection.setAppInfo({ name: result.appName, description: result.appDescription })
+    connection.setAppInfo({ name: result.appName, description: result.appDescription, uiHints: result.uiHints })
     connection.setStatus('connected')
     connection.setError(null)
     useToolStore.getState().setTools(result.tools)

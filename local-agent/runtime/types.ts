@@ -1,4 +1,5 @@
 import type { LocalAgentConfig } from '../config.js'
+import type { WebMcpUiHints } from '../types.js'
 
 export type RunAgentInput = {
   message: string
@@ -22,6 +23,7 @@ export type RunAgentInput = {
   webmcpBearerToken?: string
   webmcpAuthHeader?: string
   webmcpAuthValue?: string
+  webmcpUiHints?: WebMcpUiHints
   allowWebMcpWrites?: boolean
 }
 

@@ -6,6 +6,7 @@ import type {
   JsonObject,
   OpenApiDocument,
   OpenApiOperation,
+  WebMcpUiHints,
   WebMcpOperation,
 } from '../types.js'
 
@@ -52,6 +53,7 @@ export type WebMcpToolSummary = {
 export type WebMcpDiscovery = {
   appName?: string
   appDescription?: string
+  uiHints?: WebMcpUiHints
   tools: WebMcpToolSummary[]
 }
 
@@ -86,6 +88,7 @@ export async function discoverWebMcpApp(
   return {
     appName: document.info?.title,
     appDescription: document.info?.description,
+    uiHints: normalizeUiHints(document['x-webmcp-ui']),
     tools: operations.map(toToolSummary),
   }
 }
@@ -201,6 +204,63 @@ function parseOperations(
   }
 
   return operations
+}
+
+function normalizeUiHints(value: unknown): WebMcpUiHints | undefined {
+  if (!isRecord(value)) return undefined
+  const routes = isRecord(value.routes)
+    ? Object.fromEntries(
+        Object.entries(value.routes)
+          .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].trim().length > 0),
+      )
+    : undefined
+  const actions = isRecord(value.actions)
+    ? Object.fromEntries(
+        Object.entries(value.actions)
+          .map(([name, hint]) => [name, normalizeUiActionHint(hint)] as const)
+          .filter((entry): entry is [string, NonNullable<ReturnType<typeof normalizeUiActionHint>>] => Boolean(entry[1])),
+      )
+    : undefined
+
+  if (!routes && !actions) return undefined
+  return {
+    ...(routes ? { routes } : {}),
+    ...(actions ? { actions } : {}),
+  }
+}
+
+function normalizeUiActionHint(value: unknown) {
+  if (!isRecord(value)) return undefined
+  const route = typeof value.route === 'string' && value.route.trim() ? value.route : undefined
+  const page = typeof value.page === 'string' && value.page.trim() ? value.page : undefined
+  const fields = isRecord(value.fields)
+    ? Object.fromEntries(
+        Object.entries(value.fields)
+          .map(([name, labels]) => [name, normalizeStringList(labels)] as const)
+          .filter((entry) => entry[1].length > 0),
+      )
+    : undefined
+  const submit = normalizeStringList(value.submit)
+  const notes = typeof value.notes === 'string' && value.notes.trim() ? value.notes : undefined
+
+  if (!route && !page && !fields && submit.length === 0 && !notes) return undefined
+  return {
+    ...(route ? { route } : {}),
+    ...(page ? { page } : {}),
+    ...(fields ? { fields } : {}),
+    ...(submit.length > 0 ? { submit } : {}),
+    ...(notes ? { notes } : {}),
+  }
+}
+
+function normalizeStringList(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      .map((item) => item.trim())
+  }
+  if (typeof value === 'string' && value.trim()) return [value.trim()]
+  return []
 }
 
 function buildInputSchema(operation: OpenApiOperation, contract: OpenApiDocument): JSONSchema {

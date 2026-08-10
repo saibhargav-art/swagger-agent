@@ -130,3 +130,32 @@ Standard flow:
 - Tools: expose exact app capability and schema from `webapi.json`.
 - Runtime: enforce auth, confirmation, write blocking, and error boundaries.
 - UI: show user-friendly progress, choices, confirmation, and results.
+
+## Optional UI Hints
+
+WebMCP APIs remain the primary automation path. When a user explicitly asks to
+work through the website UI, a customer app can optionally publish browser hints
+in `/webapi.json`:
+
+```json
+{
+  "x-webmcp-ui": {
+    "routes": {
+      "orders": "/orders"
+    },
+    "actions": {
+      "createOrder": {
+        "route": "/orders",
+        "fields": {
+          "customer_name": ["Customer name"],
+          "amount": ["Amount"]
+        },
+        "submit": ["Create order"]
+      }
+    }
+  }
+}
+```
+
+Hints are generic guidance only. The browser runtime still opens the page,
+takes a snapshot, and verifies visible controls before clicking or filling.

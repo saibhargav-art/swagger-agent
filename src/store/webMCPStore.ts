@@ -14,6 +14,7 @@ interface WebMCPState {
   toolCount: number;
   appName: string | null;
   appDescription: string | null;
+  uiHints: Record<string, unknown> | null;
   setBaseUrl: (baseUrl: string) => void;
   setLoginUrl: (loginUrl: string) => void;
   setBearerToken: (bearerToken: string) => void;
@@ -21,7 +22,7 @@ interface WebMCPState {
   setStatus: (status: ConnectionStatus) => void;
   setError: (error: string | null) => void;
   setToolCount: (count: number) => void;
-  setAppInfo: (info: { name?: string | null; description?: string | null }) => void;
+  setAppInfo: (info: { name?: string | null; description?: string | null; uiHints?: Record<string, unknown> | null }) => void;
   setConnectionId: (connectionId: string) => void;
   disconnect: () => void;
 }
@@ -39,6 +40,7 @@ export const useWebMCPStore = create<WebMCPState>()(
       toolCount: 0,
       appName: null,
       appDescription: null,
+      uiHints: null,
       setBaseUrl: (baseUrl: string) =>
         set({
           connectionId: '',
@@ -48,13 +50,14 @@ export const useWebMCPStore = create<WebMCPState>()(
           toolCount: 0,
           appName: null,
           appDescription: null,
+          uiHints: null,
           checkedAt: null,
         }),
       setLoginUrl: (loginUrl: string) => set({ loginUrl: loginUrl.trim() }),
       setBearerToken: (bearerToken) => {
         const token = bearerToken.trim();
         writeSessionToken(token);
-        set({ connectionId: '', bearerToken: token, status: 'not-connected', error: null, checkedAt: null });
+        set({ connectionId: '', bearerToken: token, status: 'not-connected', error: null, checkedAt: null, uiHints: null });
       },
       setStatus: (status) => set({ status, checkedAt: status === 'connecting' ? null : Date.now() }),
       setError: (error) => set({ error }),
@@ -63,6 +66,7 @@ export const useWebMCPStore = create<WebMCPState>()(
         set({
           appName: info.name?.trim() || null,
           appDescription: info.description?.trim() || null,
+          uiHints: info.uiHints ?? null,
         }),
       setConnectionId: (connectionId) => set({ connectionId }),
       disconnect: () => {
@@ -77,6 +81,7 @@ export const useWebMCPStore = create<WebMCPState>()(
           toolCount: 0,
           appName: null,
           appDescription: null,
+          uiHints: null,
           checkedAt: null,
         });
       },

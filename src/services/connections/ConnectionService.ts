@@ -31,6 +31,7 @@ export interface CustomerAppResult {
   tools: Tool[];
   appName?: string;
   appDescription?: string;
+  uiHints?: Record<string, unknown>;
 }
 
 export interface ManagedBrowserStatus {
@@ -58,6 +59,7 @@ export async function connectCustomerApp(input: CustomerAppConnection): Promise<
     tools?: Tool[];
     appName?: string;
     appDescription?: string;
+    uiHints?: Record<string, unknown>;
   }>(`${agentUrl}/connections/customer`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -76,6 +78,7 @@ export async function connectCustomerApp(input: CustomerAppConnection): Promise<
     tools: result.tools,
     appName: result.appName,
     appDescription: result.appDescription,
+    uiHints: result.uiHints,
   };
 }
 

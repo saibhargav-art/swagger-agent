@@ -139,6 +139,25 @@ export async function readBrowserPageUrl(config: BrowserMcpConfig): Promise<stri
   return performBrowserPageRead(config)
 }
 
+export async function callBrowserMcpTool(
+  config: BrowserMcpConfig,
+  toolName: string,
+  input: Record<string, JSONValue> = {},
+): Promise<JSONValue> {
+  if (!config.browserMcpEnabled || !config.browserMcpCommand) {
+    throw new Error('Managed browser is not configured.')
+  }
+
+  try {
+    return await performBrowserToolCall(config, toolName, input)
+  } catch (error) {
+    if (!isClosedBrowserSession(error)) throw error
+  }
+
+  await resetManagedClient('browser-mcp')
+  return performBrowserToolCall(config, toolName, input)
+}
+
 export async function inspectBrowserSession(config: BrowserMcpConfig): Promise<BrowserSessionDiagnostic> {
   const profileDir = browserProfileDir(config)
   if (!config.browserMcpEnabled) {
@@ -179,6 +198,20 @@ async function performBrowserPageRead(config: BrowserMcpConfig): Promise<string 
   const client = getManagedClient('browser-mcp', config.browserMcpCommand!, config.browserMcpArgs)
   const tools = await client.listTools()
   return readConnectedPageUrl(client, tools)
+}
+
+async function performBrowserToolCall(
+  config: BrowserMcpConfig,
+  toolName: string,
+  input: Record<string, JSONValue>,
+): Promise<JSONValue> {
+  const client = getManagedClient('browser-mcp', config.browserMcpCommand!, config.browserMcpArgs)
+  const tools = await client.listTools()
+  const browserTool = tools.find((tool) => tool.name === toolName)
+  if (!browserTool) {
+    throw new Error(`The browser provider has no ${toolName} tool. Tools: ${tools.map((tool) => tool.name).join(', ')}`)
+  }
+  return client.callTool(browserTool, input)
 }
 
 async function performBrowserNavigation(

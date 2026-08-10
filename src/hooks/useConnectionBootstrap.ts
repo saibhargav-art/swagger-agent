@@ -44,7 +44,7 @@ async function restoreConnections(): Promise<void> {
     useToolStore.getState().setTools(result.tools);
     app.setConnectionId(result.connectionId);
     app.setToolCount(result.tools.length);
-    app.setAppInfo({ name: result.appName, description: result.appDescription });
+    app.setAppInfo({ name: result.appName, description: result.appDescription, uiHints: result.uiHints });
     app.setStatus('connected');
     app.setError(null);
   } catch (error) {

@@ -71,6 +71,7 @@ const server = http.createServer(async (req, res) => {
         loginUrl: connection.loginUrl,
         appName: connection.discovery.appName,
         appDescription: connection.discovery.appDescription,
+        uiHints: connection.discovery.uiHints,
         tools: connection.discovery.tools,
       })
     } catch (err) {
@@ -316,6 +317,7 @@ function resolveCustomerConnection(input: RunAgentInput): RunAgentInput {
     webmcpLoginUrl: connection.loginUrl,
     browserStartUrl: connection.loginUrl ?? connection.baseUrl,
     webmcpBearerToken: connection.bearerToken,
+    webmcpUiHints: connection.discovery.uiHints,
     allowWebMcpWrites: false,
   }
 }
