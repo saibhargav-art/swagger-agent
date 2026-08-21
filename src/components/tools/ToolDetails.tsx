@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
-import { X, Shield, Key, Code } from 'lucide-react';
-import { Badge } from '@/components/ui/index';
+import { Code, Eye, Pencil, TriangleAlert, X } from 'lucide-react';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
-import { Separator } from '@/components/ui/index';
+import { Separator } from '@/components/ui/Separator';
 import type { Tool } from '@/types/tool';
 
 interface Props {
@@ -12,124 +12,86 @@ interface Props {
 
 export default function ToolDetails({ tool, onClose }: Props) {
   return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-start justify-between p-4 border-b border-slate-200">
-        <div>
-          <p className="font-mono text-sm font-semibold text-slate-800">
-            {tool.name}
-          </p>
-          <p className="text-xs text-slate-500 mt-0.5">{tool.description}</p>
+    <div className="flex h-full flex-col">
+      <div className="flex items-start justify-between border-b border-slate-200 p-4">
+        <div className="min-w-0">
+          <p className="truncate text-sm font-semibold text-slate-800">{humanizeToolName(tool.name)}</p>
+          <code className="mt-0.5 block truncate text-[11px] text-slate-400">{tool.name}</code>
+          <p className="mt-1 text-xs leading-5 text-slate-500">{tool.description}</p>
         </div>
-        <Button variant="ghost" size="icon" onClick={onClose} className="shrink-0 -mt-1 -mr-1">
+        <Button variant="ghost" size="icon" onClick={onClose} className="-mr-1 -mt-1 shrink-0" title="Close details">
           <X size={15} />
         </Button>
       </div>
 
-      {/* Body */}
-      <div className="flex-1 overflow-y-auto p-4 space-y-5 scrollbar-thin">
-        {/* Required Roles */}
-        <Section icon={<Shield size={13} />} title="Required Roles">
-          {tool.requiredRoles.length === 0 ? (
-            <p className="text-xs text-slate-400">None</p>
-          ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {tool.requiredRoles.map((r) => (
-                <Badge key={r} variant="default">{r}</Badge>
-              ))}
-            </div>
-          )}
+      <div className="flex-1 space-y-5 overflow-y-auto p-4 scrollbar-thin">
+        <Section icon={tool.annotations.readOnly ? <Eye size={13} /> : <Pencil size={13} />} title="Behavior">
+          <div className="flex flex-wrap gap-2">
+            <Badge variant={tool.annotations.readOnly ? 'success' : 'default'}>
+              {tool.annotations.readOnly ? 'Read-only' : 'Confirmation required'}
+            </Badge>
+            {tool.annotations.destructive ? (
+              <Badge variant="error"><TriangleAlert size={11} /> Destructive</Badge>
+            ) : null}
+          </div>
+          <p className="mt-2 text-xs leading-5 text-slate-500">
+            Authorization is enforced by the customer backend using the connected user session.
+          </p>
         </Section>
 
         <Separator />
 
-        {/* Required Scopes */}
-        <Section icon={<Key size={13} />} title="Required Scopes">
-          {tool.requiredScopes.length === 0 ? (
-            <p className="text-xs text-slate-400">None</p>
-          ) : (
-            <div className="flex flex-wrap gap-1.5">
-              {tool.requiredScopes.map((s) => (
-                <Badge key={s} variant="outline">{s}</Badge>
-              ))}
-            </div>
-          )}
-        </Section>
-
-        <Separator />
-
-        {/* Parameters */}
         <Section icon={<Code size={13} />} title="Parameters">
           {tool.schema.parameters.length === 0 ? (
             <p className="text-xs text-slate-400">No parameters</p>
           ) : (
             <div className="space-y-2">
-              {tool.schema.parameters.map((param) => (
-                <div
-                  key={param.name}
-                  className="rounded-md border border-slate-200 bg-slate-50 p-2.5"
-                >
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <code className="text-xs font-semibold text-slate-800 font-mono">
-                      {param.name}
-                    </code>
-                    <Badge variant="muted">{param.type}</Badge>
-                    {param.required ? (
-                      <Badge variant="error">required</Badge>
-                    ) : (
-                      <Badge variant="outline">optional</Badge>
-                    )}
+              {tool.schema.parameters.map((parameter) => (
+                <div key={parameter.name} className="rounded-md border border-slate-200 bg-slate-50 p-2.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <code className="font-mono text-xs font-semibold text-slate-800">{parameter.name}</code>
+                    <Badge variant="muted">{parameter.type}</Badge>
+                    <Badge variant={parameter.required ? 'error' : 'outline'}>
+                      {parameter.required ? 'required' : 'optional'}
+                    </Badge>
                   </div>
-                  {param.description && (
-                    <p className="text-xs text-slate-500 mt-1">{param.description}</p>
-                  )}
-                  {param.enum && (
-                    <div className="flex flex-wrap gap-1 mt-1.5">
-                      {param.enum.map((v) => (
-                        <code
-                          key={v}
-                          className="text-xs bg-white border border-slate-200 rounded px-1 py-0.5 text-slate-600"
-                        >
-                          {v}
+                  {parameter.description ? <p className="mt-1 text-xs text-slate-500">{parameter.description}</p> : null}
+                  {parameter.enum?.length ? (
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {parameter.enum.map((value) => (
+                        <code key={value} className="rounded border border-slate-200 bg-white px-1.5 py-0.5 text-xs text-slate-600">
+                          {value}
                         </code>
                       ))}
                     </div>
-                  )}
+                  ) : null}
                 </div>
               ))}
             </div>
           )}
-        </Section>
-
-        <Separator />
-
-        {/* Raw Schema */}
-        <Section icon={<Code size={13} />} title="JSON Schema">
-          <pre className="text-xs bg-slate-900 text-slate-100 rounded-md p-3 overflow-x-auto font-mono scrollbar-thin">
-            {JSON.stringify(tool.schema, null, 2)}
-          </pre>
         </Section>
       </div>
     </div>
   );
 }
 
-function Section({
-  icon,
-  title,
-  children,
-}: {
-  icon: ReactNode;
-  title: string;
-  children: ReactNode;
-}) {
+function Section({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
   return (
-    <div>
-      <div className="flex items-center gap-1.5 text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+    <section>
+      <div className="mb-2 flex items-center gap-1.5 text-xs font-semibold uppercase text-slate-500">
         {icon}
         {title}
       </div>
       {children}
-    </div>
+    </section>
   );
+}
+
+function humanizeToolName(name: string): string {
+  return name
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^./, (char) => char.toUpperCase());
 }

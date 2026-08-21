@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { MessageSquare, Wrench, Settings, Zap } from 'lucide-react';
+import { MessageSquare, Wrench, Zap } from 'lucide-react';
 import { cn } from '@/utils/cn';
 
 const navItems = [
@@ -9,9 +9,8 @@ const navItems = [
 
 export default function NavSidebar() {
   return (
-    <nav className="flex w-14 flex-col items-center border-r border-slate-200 bg-slate-900 py-4 gap-1">
-      {/* Logo */}
-      <div className="mb-4 flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-600">
+    <nav className="flex w-12 shrink-0 flex-col items-center gap-1 border-r border-slate-800 bg-slate-950 py-3 sm:w-14 sm:py-4">
+      <div className="mb-4 flex h-9 w-9 items-center justify-center rounded-md bg-indigo-600" title="Local agent">
         <Zap size={18} className="text-white" />
       </div>
 
@@ -23,7 +22,7 @@ export default function NavSidebar() {
             title={label}
             className={({ isActive }) =>
               cn(
-                'flex h-9 w-9 items-center justify-center rounded-lg transition-colors',
+                'flex h-9 w-9 items-center justify-center rounded-md transition-colors',
                 isActive
                   ? 'bg-slate-700 text-white'
                   : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'
@@ -31,6 +30,7 @@ export default function NavSidebar() {
             }
           >
             <Icon size={18} />
+            <span className="sr-only">{label}</span>
           </NavLink>
         ))}
       </div>

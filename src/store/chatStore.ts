@@ -1,5 +1,6 @@
 import { create } from 'zustand';
-import type { Conversation, Message, PendingToolRequest } from '@/types/chat';
+import { createJSONStorage, persist } from 'zustand/middleware';
+import type { Conversation, Message } from '@/types/chat';
 import { generateId } from '@/utils/format';
 
 interface ChatState {
@@ -20,15 +21,14 @@ interface ChatState {
     messageId: string,
     updates: Partial<Message>
   ) => void;
-  setPendingToolRequest: (conversationId: string, pending: PendingToolRequest | null) => void;
-
   setStreaming: (streaming: boolean) => void;
+  cleanupAfterReload: () => void;
 
   // Derived
   getActiveConversation: () => Conversation | undefined;
 }
 
-export const useChatStore = create<ChatState>()((set, get) => ({
+export const useChatStore = create<ChatState>()(persist((set, get) => ({
   conversations: [],
   activeConversationId: null,
   isStreaming: false,
@@ -107,24 +107,54 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     }));
   },
 
-  setPendingToolRequest: (conversationId, pending) => {
-    set((s) => ({
-      conversations: s.conversations.map((c) =>
-        c.id === conversationId
-          ? {
-              ...c,
-              pendingToolRequest: pending ?? undefined,
-              updatedAt: Date.now(),
-            }
-          : c
-      ),
-    }));
-  },
-
   setStreaming: (isStreaming) => set({ isStreaming }),
+
+  cleanupAfterReload: () => {
+    set((state) => {
+      const conversations = state.conversations
+        .map((conversation) => ({
+          ...conversation,
+          messages: sanitizePersistedMessages(conversation.messages),
+        }))
+        .filter((conversation) => conversation.messages.length > 0);
+      const activeConversationId = conversations.some((conversation) => conversation.id === state.activeConversationId)
+        ? state.activeConversationId
+        : conversations[0]?.id ?? null;
+
+      return {
+        conversations,
+        activeConversationId,
+        isStreaming: false,
+      };
+    });
+  },
 
   getActiveConversation: () => {
     const { conversations, activeConversationId } = get();
     return conversations.find((c) => c.id === activeConversationId);
   },
+}), {
+  name: 'swagger-agent-chat-session',
+  storage: createJSONStorage(() => sessionStorage),
+  partialize: (state) => ({
+    conversations: state.conversations.map((conversation) => ({
+      ...conversation,
+      messages: sanitizePersistedMessages(conversation.messages),
+    })),
+    activeConversationId: state.activeConversationId,
+  }),
 }));
+
+function sanitizePersistedMessages(messages: Message[]): Message[] {
+  return messages
+    .filter((message) => !message.runtimeConfirmation)
+    .map((message) => ({
+      ...message,
+      isStreaming: false,
+      runtimeTrace: undefined,
+    }))
+    .filter((message) => {
+      if (message.role === 'user') return Boolean(message.content.trim());
+      return Boolean(message.content.trim());
+    });
+}
