@@ -1,9 +1,9 @@
 # Agent Runtime Boundary
 
-The chat UI should talk to an `AgentRuntime`, not directly to Strands, Playwright MCP, or WebMCP orchestration code.
+The chat UI talks to an `AgentRuntime`, never directly to Strands or WebMCP orchestration code.
 
 Current implementation:
 
-- `strands-local`: Node-side Strands agent in `local-agent/`.
+- `strands-local`: the tools-only Node Strands service in `local-agent/`.
 
-This boundary keeps the UI stable while orchestration moves to a desktop/local service.
+This boundary keeps provider selection, planning, tool execution, and confirmation outside the React application.

@@ -21,14 +21,11 @@ local-agent/
   runtime/
     agent-trace.ts      # trace extraction and tool result helpers
     confirmation.ts     # text confirmation helpers
-    tool-planner.ts     # model-assisted tool selection
-    tool-policy.ts      # tool narrowing policy
     types.ts            # HTTP runtime types
   tools/
     webmcp-tools.ts     # WebMCP capability conversion
   agent-runtime.ts      # Strands orchestration
   server.ts             # local HTTP bridge for the React app
-  strands-agent.ts      # CLI entry point
   config.ts             # environment/runtime config
 ```
 
@@ -68,27 +65,17 @@ $env:ANTHROPIC_MODEL="claude-3-5-sonnet-latest"
 
 ## Performance Knobs
 
-Runtime defaults are tuned for responsive tool planning and execution:
+Runtime limits can be adjusted for longer multi-tool workflows:
 
 ```powershell
-$env:STRANDS_MAX_TURNS="3"
-$env:STRANDS_TOOL_LIMIT="6"
-$env:STRANDS_PLANNER_CANDIDATES="60"
-$env:STRANDS_MAX_TOKENS="6000"
-$env:STRANDS_MAX_HISTORY_MESSAGES="6"
+$env:STRANDS_MAX_TURNS="8"
+$env:STRANDS_MAX_TOKENS="12000"
 ```
 
-The runtime builds a compact candidate catalog from generic tool metadata, asks the configured model for a structured tool plan, and sends only the selected tool schemas to the execution agent.
-
-For timing logs:
-
-```powershell
-$env:STRANDS_DEBUG_TIMING="true"
-npm run agent:server
-```
+The discovered tools are registered directly with one stateful Strands agent per conversation. Strands owns native tool selection, parameter extraction, multi-step execution, and conversation history.
 
 ## Why This Shape
 
-The chat UI stays thin. It handles connection state, user messages, confirmations, and display. The local runtime owns model-assisted tool selection, parameter extraction, write blocking, and error boundaries.
+The chat UI stays thin. It handles connection state, user messages, confirmations, and display. Strands owns agent reasoning and tool calls; the local runtime owns credentials, write confirmation, traces, and error boundaries.
 
 Customer app authorization still belongs to the customer backend. Every tool endpoint must validate session, role, scope, and request body.

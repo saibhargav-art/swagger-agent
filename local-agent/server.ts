@@ -8,9 +8,9 @@ import {
   getCustomerConnection,
 } from './connections/customer-connections.js'
 import { releaseCustomerConnection, resolvePendingAction, runAgent, shutdownAgents } from './agent-runtime.js'
-import type { RunAgentInput } from './runtime/types.js'
+import type { ResolvedRunAgentInput, RunAgentInput } from './runtime/types.js'
 
-const config = readConfig([])
+const config = readConfig()
 const port = Number(process.env.STRANDS_AGENT_PORT ?? 8787)
 const host = process.env.STRANDS_AGENT_HOST ?? '127.0.0.1'
 
@@ -51,8 +51,6 @@ const server = http.createServer(async (req, res) => {
         connectionId: connection.id,
         baseUrl: connection.baseUrl,
         appName: connection.discovery.appName,
-        appDescription: connection.discovery.appDescription,
-        uiHints: connection.discovery.uiHints,
         tools: connection.discovery.tools,
       })
     } catch (err) {
@@ -98,63 +96,24 @@ const server = http.createServer(async (req, res) => {
         conversationId?: string
         approved?: boolean
         kind?: 'write'
-        webmcpBearerToken?: string
-        webmcpAuthHeader?: string
-        webmcpAuthValue?: string
         customerConnectionId?: string
       }>(req)
-      const connection = body.customerConnectionId
-        ? optionalCustomerConnection(body.customerConnectionId)
-        : undefined
+      if (!body.customerConnectionId) {
+        sendJson(res, 400, { error: 'Connect a customer app before confirming an action.' })
+        return
+      }
+      const connection = getCustomerConnection(body.customerConnectionId)
       const result = await resolvePendingAction({
         conversationId: body.conversationId ?? 'default',
         approved: Boolean(body.approved),
         kind: body.kind,
-        webmcpBearerToken: connection?.bearerToken ?? body.webmcpBearerToken,
-        webmcpAuthHeader: body.webmcpAuthHeader,
-        webmcpAuthValue: body.webmcpAuthValue,
+        webmcpBearerToken: connection.bearerToken,
       })
       logTiming('confirm', startedAt)
       sendJson(res, 200, result)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Pending action confirmation failed'
       sendJson(res, 500, { error: message })
-    }
-    return
-  }
-
-  if (req.method === 'POST' && req.url === '/model-health') {
-    try {
-      const body = await readJson<{
-        modelProvider?: string
-        openAiApiKey?: string
-        openAiModel?: string
-        anthropicApiKey?: string
-        anthropicModel?: string
-      }>(req)
-
-      const provider = body.modelProvider ?? config.modelProvider
-      if (provider === 'openai') {
-        if (!(body.openAiApiKey ?? config.openAiApiKey)) {
-          sendJson(res, 400, { ok: false, error: 'OpenAI API key is required.' })
-          return
-        }
-        sendJson(res, 200, { ok: true, modelProvider: provider, model: body.openAiModel ?? config.openAiModel })
-        return
-      }
-
-      if (provider === 'anthropic') {
-        if (!(body.anthropicApiKey ?? config.anthropicApiKey)) {
-          sendJson(res, 400, { ok: false, error: 'Anthropic API key is required for Claude.' })
-          return
-        }
-        sendJson(res, 200, { ok: true, modelProvider: provider, model: body.anthropicModel ?? config.anthropicModel })
-        return
-      }
-
-      sendJson(res, 400, { ok: false, error: 'Unsupported model provider. Use OpenAI or Claude.' })
-    } catch (err) {
-      sendJson(res, 500, { ok: false, error: err instanceof Error ? err.message : 'Model health check failed' })
     }
     return
   }
@@ -186,28 +145,16 @@ async function shutdown() {
   server.close(() => process.exit(0))
 }
 
-function resolveCustomerConnection(input: RunAgentInput): RunAgentInput {
-  if (!input.customerConnectionId) return input
-  let connection: ReturnType<typeof getCustomerConnection>
-  try {
-    connection = getCustomerConnection(input.customerConnectionId)
-  } catch (error) {
-    if (input.webmcpBaseUrl && input.webmcpBearerToken) return input
-    throw error
+function resolveCustomerConnection(input: RunAgentInput): ResolvedRunAgentInput {
+  if (!input.customerConnectionId) {
+    throw new Error('Connect a customer app before sending a message.')
   }
+  const connection = getCustomerConnection(input.customerConnectionId)
   return {
     ...input,
+    customerConnectionId: input.customerConnectionId,
     webmcpBaseUrl: connection.baseUrl,
     webmcpBearerToken: connection.bearerToken,
-    allowWebMcpWrites: false,
-  }
-}
-
-function optionalCustomerConnection(connectionId: string) {
-  try {
-    return getCustomerConnection(connectionId)
-  } catch {
-    return undefined
   }
 }
 

@@ -147,10 +147,10 @@ export const useChatStore = create<ChatState>()(persist((set, get) => ({
 
 function sanitizePersistedMessages(messages: Message[]): Message[] {
   return messages
+    .filter((message) => !message.runtimeConfirmation)
     .map((message) => ({
       ...message,
       isStreaming: false,
-      runtimeConfirmation: undefined,
       runtimeTrace: undefined,
     }))
     .filter((message) => {

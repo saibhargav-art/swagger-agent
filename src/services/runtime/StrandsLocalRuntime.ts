@@ -131,8 +131,6 @@ function buildRequestPayload(
           anthropicModel: runtime.anthropicModel,
         }),
     customerConnectionId,
-    webmcpBaseUrl: customerConnectionId ? undefined : connection.baseUrl || undefined,
-    webmcpBearerToken: customerConnectionId ? undefined : connection.bearerToken || undefined,
   }
 }
 
@@ -148,8 +146,6 @@ function buildConfirmPayload(
     approved,
     kind,
     customerConnectionId,
-    webmcpBaseUrl: customerConnectionId ? undefined : connection.baseUrl || undefined,
-    webmcpBearerToken: customerConnectionId ? undefined : connection.bearerToken || undefined,
   }
 }
 
@@ -185,8 +181,7 @@ async function restoreCustomerConnection(agentUrl: string): Promise<void> {
       bearerToken: connection.bearerToken,
     })
     connection.setConnectionId(result.connectionId)
-    connection.setToolCount(result.tools.length)
-    connection.setAppInfo({ name: result.appName, description: result.appDescription, uiHints: result.uiHints })
+    connection.setAppName(result.appName)
     connection.setStatus('connected')
     connection.setError(null)
     useToolStore.getState().setTools(result.tools)

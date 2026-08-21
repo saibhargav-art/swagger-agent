@@ -16,7 +16,6 @@ interface AgentRuntimeState {
   anthropicModel: string;
   status: ConnectionStatus;
   statusMessage: string | null;
-  checkedAt: number | null;
   setAgentUrl: (agentUrl: string) => void;
   setModelProvider: (modelProvider: StrandsModelProvider) => void;
   setOpenAiConfig: (config: { apiKey?: string; model?: string }) => void;
@@ -49,7 +48,6 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>()(
       ...defaults,
       status: 'not-connected',
       statusMessage: null,
-      checkedAt: null,
       setAgentUrl: (agentUrl) => set({ agentUrl: agentUrl.trim(), status: 'not-connected', statusMessage: null }),
       setModelProvider: (modelProvider) => set({ modelProvider, status: 'not-connected', statusMessage: null }),
       setOpenAiConfig: (config) =>
@@ -77,7 +75,6 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>()(
       setConnectionState: (status, statusMessage = null) => set({
         status,
         statusMessage,
-        checkedAt: status === 'connecting' ? null : Date.now(),
       }),
       disconnect: () => {
         writeSessionSecret(OPENAI_KEY_STORAGE_KEY, '');
@@ -85,7 +82,6 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>()(
         set({
           status: 'not-connected',
           statusMessage: null,
-          checkedAt: null,
           openAiApiKey: '',
           anthropicApiKey: '',
         });
@@ -99,7 +95,6 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>()(
           anthropicApiKey: '',
           status: 'not-connected',
           statusMessage: null,
-          checkedAt: null,
         });
       },
     }),

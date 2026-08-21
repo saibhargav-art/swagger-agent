@@ -22,8 +22,6 @@ export interface CustomerAppResult {
   bearerToken: string;
   tools: Tool[];
   appName?: string;
-  appDescription?: string;
-  uiHints?: Record<string, unknown>;
 }
 
 export async function connectCustomerApp(input: CustomerAppConnection): Promise<CustomerAppResult> {
@@ -38,8 +36,6 @@ export async function connectCustomerApp(input: CustomerAppConnection): Promise<
     baseUrl?: string;
     tools?: Tool[];
     appName?: string;
-    appDescription?: string;
-    uiHints?: Record<string, unknown>;
   }>(`${agentUrl}/connections/customer`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -56,8 +52,6 @@ export async function connectCustomerApp(input: CustomerAppConnection): Promise<
     bearerToken,
     tools: result.tools,
     appName: result.appName,
-    appDescription: result.appDescription,
-    uiHints: result.uiHints,
   };
 }
 
@@ -89,24 +83,11 @@ export async function testAgentConnection(
     throw new Error('The local agent is running an older build. Restart it and try again.');
   }
 
-  const model = await fetchJson<{ ok?: boolean; error?: string }>(`${agentUrl}/model-health`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      modelProvider: settings.modelProvider,
-      openAiApiKey: settings.openAiApiKey,
-      openAiModel: settings.openAiModel,
-      anthropicApiKey: settings.anthropicApiKey,
-      anthropicModel: settings.anthropicModel,
-    }),
-  });
-  if (!model.ok) throw new Error(model.error ?? 'The selected model is not available.');
-
   const modelLabel = settings.modelProvider === 'openai'
     ? settings.openAiModel
     : settings.anthropicModel;
 
-  return { agentUrl, message: `${modelLabel} is ready.` };
+  return { agentUrl, message: `Runtime ready. ${modelLabel} will be verified with the first prompt.` };
 }
 
 export function normalizeCustomerAppUrl(value: string): string {

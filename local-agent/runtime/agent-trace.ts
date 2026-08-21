@@ -16,7 +16,7 @@ export function extractTrace(messages: Message[]): AgentTraceStep[] {
         const toolResult = block as { toolUseId: string }
         const toolUse = toolUses.get(toolResult.toolUseId)
         const values = extractToolResultValues(block)
-        const result = values.length === 1 ? values[0] : values
+        const result = unwrapToolResult(values.length === 1 ? values[0] : values)
         trace.push({
           type: 'tool',
           name: toolUse?.name ?? 'unknown_tool',
@@ -57,6 +57,20 @@ export function toolResultText(result: unknown): string {
     .join(' ')
 
   return text || JSON.stringify(result)
+}
+
+export function unwrapToolResult(result: unknown): unknown {
+  let current = result
+  const visited = new Set<unknown>()
+
+  while (current && typeof current === 'object' && !Array.isArray(current) && !visited.has(current)) {
+    visited.add(current)
+    const record = current as Record<string, unknown>
+    if (!('$value' in record)) break
+    current = record.$value
+  }
+
+  return current
 }
 
 export function hasFailedToolResult(message: Message): boolean {

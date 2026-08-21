@@ -59,7 +59,7 @@ export default function ConnectionsPage() {
           <CustomerAppConnectionCard
             status={connection.customer.status}
             message={connection.customer.error}
-            toolCount={connection.customer.toolCount}
+            toolCount={tools.length}
             url={connection.customerUrl}
             token={connection.accessToken}
             onUrlChange={connection.setCustomerUrl}

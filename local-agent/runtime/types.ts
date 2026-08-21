@@ -8,11 +8,12 @@ export type RunAgentInput = {
   anthropicApiKey?: string
   anthropicModel?: string
   customerConnectionId?: string
-  webmcpBaseUrl?: string
-  webmcpBearerToken?: string
-  webmcpAuthHeader?: string
-  webmcpAuthValue?: string
-  allowWebMcpWrites?: boolean
+}
+
+export type ResolvedRunAgentInput = RunAgentInput & {
+  customerConnectionId: string
+  webmcpBaseUrl: string
+  webmcpBearerToken: string
 }
 
 export type ConfirmPendingActionInput = {
@@ -20,8 +21,6 @@ export type ConfirmPendingActionInput = {
   approved: boolean
   kind?: 'write'
   webmcpBearerToken?: string
-  webmcpAuthHeader?: string
-  webmcpAuthValue?: string
 }
 
 export type AgentTraceStep = {

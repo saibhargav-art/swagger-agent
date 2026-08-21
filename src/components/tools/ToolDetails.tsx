@@ -15,7 +15,8 @@ export default function ToolDetails({ tool, onClose }: Props) {
     <div className="flex h-full flex-col">
       <div className="flex items-start justify-between border-b border-slate-200 p-4">
         <div className="min-w-0">
-          <p className="truncate font-mono text-sm font-semibold text-slate-800">{tool.name}</p>
+          <p className="truncate text-sm font-semibold text-slate-800">{humanizeToolName(tool.name)}</p>
+          <code className="mt-0.5 block truncate text-[11px] text-slate-400">{tool.name}</code>
           <p className="mt-1 text-xs leading-5 text-slate-500">{tool.description}</p>
         </div>
         <Button variant="ghost" size="icon" onClick={onClose} className="-mr-1 -mt-1 shrink-0" title="Close details">
@@ -84,4 +85,13 @@ function Section({ icon, title, children }: { icon: ReactNode; title: string; ch
       {children}
     </section>
   );
+}
+
+function humanizeToolName(name: string): string {
+  return name
+    .replace(/([a-z])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^./, (char) => char.toUpperCase());
 }

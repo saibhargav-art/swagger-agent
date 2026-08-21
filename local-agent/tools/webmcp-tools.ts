@@ -6,7 +6,6 @@ import type {
   JsonObject,
   OpenApiDocument,
   OpenApiOperation,
-  WebMcpUiHints,
   WebMcpOperation,
 } from '../types.js'
 
@@ -15,8 +14,6 @@ const HTTP_METHODS = new Set(['get', 'post', 'put', 'patch', 'delete'])
 type WebMcpToolOptions = {
   baseUrl: string
   bearerToken?: string
-  authHeader?: string
-  authValue?: string
   allowWrites: boolean
   confirmationSessionId?: string
   customerConnectionId?: string
@@ -29,7 +26,7 @@ type PendingWrite = {
   createdAt: number
 }
 
-type WebMcpAuthOverride = Pick<WebMcpToolOptions, 'bearerToken' | 'authHeader' | 'authValue'>
+type WebMcpAuthOverride = Pick<WebMcpToolOptions, 'bearerToken'>
 
 export type WebMcpToolSummary = {
   id: string
@@ -52,8 +49,6 @@ export type WebMcpToolSummary = {
 
 export type WebMcpDiscovery = {
   appName?: string
-  appDescription?: string
-  uiHints?: WebMcpUiHints
   tools: WebMcpToolSummary[]
 }
 
@@ -82,13 +77,11 @@ export async function createWebMcpTools(options: WebMcpToolOptions) {
 }
 
 export async function discoverWebMcpApp(
-  options: Pick<WebMcpToolOptions, 'baseUrl' | 'bearerToken' | 'authHeader' | 'authValue'>,
+  options: Pick<WebMcpToolOptions, 'baseUrl' | 'bearerToken'>,
 ): Promise<WebMcpDiscovery> {
   const { document, operations } = await loadContract(options, true)
   return {
     appName: document.info?.title,
-    appDescription: document.info?.description,
-    uiHints: normalizeUiHints(document['x-webmcp-ui']),
     tools: operations.map(toToolSummary),
   }
 }
@@ -150,7 +143,7 @@ function resolveApiBaseUrl(contract: OpenApiDocument, contractUrl: URL): URL {
 }
 
 async function loadContract(
-  options: Pick<WebMcpToolOptions, 'baseUrl' | 'bearerToken' | 'authHeader' | 'authValue'>,
+  options: Pick<WebMcpToolOptions, 'baseUrl' | 'bearerToken'>,
   refresh = false,
 ): Promise<LoadedContract> {
   const contractUrl = resolveContractUrl(options.baseUrl)
@@ -204,63 +197,6 @@ function parseOperations(
   }
 
   return operations
-}
-
-function normalizeUiHints(value: unknown): WebMcpUiHints | undefined {
-  if (!isRecord(value)) return undefined
-  const routes = isRecord(value.routes)
-    ? Object.fromEntries(
-        Object.entries(value.routes)
-          .filter((entry): entry is [string, string] => typeof entry[1] === 'string' && entry[1].trim().length > 0),
-      )
-    : undefined
-  const actions = isRecord(value.actions)
-    ? Object.fromEntries(
-        Object.entries(value.actions)
-          .map(([name, hint]) => [name, normalizeUiActionHint(hint)] as const)
-          .filter((entry): entry is [string, NonNullable<ReturnType<typeof normalizeUiActionHint>>] => Boolean(entry[1])),
-      )
-    : undefined
-
-  if (!routes && !actions) return undefined
-  return {
-    ...(routes ? { routes } : {}),
-    ...(actions ? { actions } : {}),
-  }
-}
-
-function normalizeUiActionHint(value: unknown) {
-  if (!isRecord(value)) return undefined
-  const route = typeof value.route === 'string' && value.route.trim() ? value.route : undefined
-  const page = typeof value.page === 'string' && value.page.trim() ? value.page : undefined
-  const fields = isRecord(value.fields)
-    ? Object.fromEntries(
-        Object.entries(value.fields)
-          .map(([name, labels]) => [name, normalizeStringList(labels)] as const)
-          .filter((entry) => entry[1].length > 0),
-      )
-    : undefined
-  const submit = normalizeStringList(value.submit)
-  const notes = typeof value.notes === 'string' && value.notes.trim() ? value.notes : undefined
-
-  if (!route && !page && !fields && submit.length === 0 && !notes) return undefined
-  return {
-    ...(route ? { route } : {}),
-    ...(page ? { page } : {}),
-    ...(fields ? { fields } : {}),
-    ...(submit.length > 0 ? { submit } : {}),
-    ...(notes ? { notes } : {}),
-  }
-}
-
-function normalizeStringList(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value
-      .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
-      .map((item) => item.trim())
-  }
-  if (typeof value === 'string' && value.trim()) return [value.trim()]
-  return []
 }
 
 function buildInputSchema(operation: OpenApiOperation, contract: OpenApiDocument): JSONSchema {
@@ -387,7 +323,6 @@ function buildHeaders(operation: WebMcpOperation, options: WebMcpToolOptions): R
   }
 
   if (options.bearerToken) headers.Authorization = `Bearer ${options.bearerToken}`
-  if (options.authHeader && options.authValue) headers[options.authHeader] = options.authValue
 
   return headers
 }
@@ -418,11 +353,10 @@ function buildBody(operation: WebMcpOperation, input: JsonObject): JsonObject | 
 
 async function fetchJson<T>(
   url: URL,
-  auth: Pick<WebMcpToolOptions, 'bearerToken' | 'authHeader' | 'authValue'>,
+  auth: Pick<WebMcpToolOptions, 'bearerToken'>,
 ): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' }
   if (auth.bearerToken) headers.Authorization = `Bearer ${auth.bearerToken}`
-  if (auth.authHeader && auth.authValue) headers[auth.authHeader] = auth.authValue
   const response = await fetch(url, { headers })
   if (!response.ok) throw new Error(`Failed to load ${url.toString()}: HTTP ${response.status}`)
   const text = await response.text()
@@ -449,7 +383,7 @@ function describeOperation(operation: WebMcpOperation): string {
     `HTTP ${operation.method} ${operation.path}.`,
   ]
   if (isWriteOperation(operation)) {
-    parts.push('This changes customer data. Ask for explicit user confirmation before invoking it.')
+    parts.push('This changes customer data. Invoking it stages the action for explicit user confirmation in the runtime.')
   } else {
     parts.push('This is a read-only tool. It can be invoked without write confirmation.')
   }
@@ -498,9 +432,9 @@ function parameterType(value: unknown): WebMcpToolSummary['schema']['parameters'
 }
 
 function credentialFingerprint(
-  options: Pick<WebMcpToolOptions, 'bearerToken' | 'authHeader' | 'authValue'>,
+  options: Pick<WebMcpToolOptions, 'bearerToken'>,
 ): string {
-  const value = `${options.bearerToken ?? ''}|${options.authHeader ?? ''}|${options.authValue ?? ''}`
+  const value = options.bearerToken ?? ''
   return createHash('sha256').update(value).digest('hex')
 }
 

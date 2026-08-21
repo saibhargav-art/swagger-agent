@@ -19,13 +19,22 @@ export function useConnections() {
   useEffect(() => setCustomerUrl(customer.baseUrl), [customer.baseUrl]);
   useEffect(() => setAccessToken(customer.bearerToken), [customer.bearerToken]);
 
-  const invalidateCustomerConnection = useCallback(() => {
-    if (customer.status === 'not-connected' && !customer.connectionId && customer.toolCount === 0) return;
+  useEffect(() => {
+    if (agent.status === 'connected' || customer.status === 'not-connected') return;
     customer.setConnectionId('');
     customer.setStatus('not-connected');
     customer.setError(null);
-    customer.setToolCount(0);
-    customer.setAppInfo({ name: null, description: null, uiHints: null });
+    customer.setAppName(null);
+    setTools([]);
+    setToolsError(null);
+  }, [agent.status, customer, setTools, setToolsError]);
+
+  const invalidateCustomerConnection = useCallback(() => {
+    if (customer.status === 'not-connected' && !customer.connectionId) return;
+    customer.setConnectionId('');
+    customer.setStatus('not-connected');
+    customer.setError(null);
+    customer.setAppName(null);
     setTools([]);
     setToolsError(null);
   }, [customer, setTools, setToolsError]);
@@ -72,8 +81,7 @@ export function useConnections() {
       customer.setBaseUrl(result.baseUrl);
       customer.setBearerToken(result.bearerToken);
       customer.setConnectionId(result.connectionId);
-      customer.setToolCount(result.tools.length);
-      customer.setAppInfo({ name: result.appName, description: result.appDescription, uiHints: result.uiHints });
+      customer.setAppName(result.appName);
       setTools(result.tools);
       customer.setStatus('connected');
       customer.setError(null);
@@ -81,7 +89,6 @@ export function useConnections() {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not connect to the customer app.';
       setTools([]);
-      customer.setToolCount(0);
       customer.setStatus('error');
       customer.setError(message);
       setToolsError(message);
@@ -100,7 +107,16 @@ export function useConnections() {
     }
   }, [connectWebsite]);
 
-  const disconnectAgent = useCallback(() => agent.disconnect(), [agent]);
+  const disconnectAgent = useCallback(() => {
+    const connectionId = customer.connectionId;
+    customer.disconnect();
+    setTools([]);
+    setToolsError(null);
+    agent.disconnect();
+    if (connectionId) {
+      void disconnectCustomerApp(agent.agentUrl, connectionId).catch(() => undefined);
+    }
+  }, [agent, customer, setTools, setToolsError]);
 
   const disconnectWebsite = useCallback(async () => {
     const connectionId = customer.connectionId;

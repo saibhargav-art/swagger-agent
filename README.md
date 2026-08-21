@@ -26,25 +26,9 @@ npm run build
 npm run preview
 ```
 
-## Local Strands Agent POC
+## Local Strands Agent
 
-This branch uses a Node-side Strands runtime in `local-agent/`.
-
-Use it to test the standard agent flow without disturbing the React chat app:
-
-```bash
-npm run agent:poc -- "list the available customer actions"
-```
-
-With a customer website connected through WebMCP:
-
-```bash
-WEBMCP_BASE_URL=http://localhost:5173 WEBMCP_BEARER_TOKEN=<token> npm run agent:poc -- "search orders for vijay"
-```
-
-The Strands runtime loads WebMCP tools and lets the model choose tools and parameters. Runtime policy still blocks write actions until the user confirms them in chat.
-
-To route the React chat through the local Strands HTTP service:
+The Node-side Strands runtime in `local-agent/` is the only orchestration service. Start it before the React app:
 
 ```bash
 npm run agent:server

@@ -10,17 +10,12 @@ interface WebMCPState {
   bearerToken: string;
   status: ConnectionStatus;
   error: string | null;
-  toolCount: number;
   appName: string | null;
-  appDescription: string | null;
-  uiHints: Record<string, unknown> | null;
   setBaseUrl: (baseUrl: string) => void;
   setBearerToken: (bearerToken: string) => void;
-  checkedAt: number | null;
   setStatus: (status: ConnectionStatus) => void;
   setError: (error: string | null) => void;
-  setToolCount: (count: number) => void;
-  setAppInfo: (info: { name?: string | null; description?: string | null; uiHints?: Record<string, unknown> | null }) => void;
+  setAppName: (name?: string | null) => void;
   setConnectionId: (connectionId: string) => void;
   disconnect: () => void;
 }
@@ -33,22 +28,14 @@ export const useWebMCPStore = create<WebMCPState>()(
       bearerToken: readSessionToken(),
       status: 'not-connected',
       error: null,
-      checkedAt: null,
-      toolCount: 0,
       appName: null,
-      appDescription: null,
-      uiHints: null,
       setBaseUrl: (baseUrl: string) =>
         set({
           connectionId: '',
           baseUrl: baseUrl.trim(),
           status: 'not-connected',
           error: null,
-          toolCount: 0,
           appName: null,
-          appDescription: null,
-          uiHints: null,
-          checkedAt: null,
         }),
       setBearerToken: (bearerToken) => {
         const token = bearerToken.trim();
@@ -58,22 +45,12 @@ export const useWebMCPStore = create<WebMCPState>()(
           bearerToken: token,
           status: 'not-connected',
           error: null,
-          checkedAt: null,
-          toolCount: 0,
           appName: null,
-          appDescription: null,
-          uiHints: null,
         });
       },
-      setStatus: (status) => set({ status, checkedAt: status === 'connecting' ? null : Date.now() }),
+      setStatus: (status) => set({ status }),
       setError: (error) => set({ error }),
-      setToolCount: (toolCount) => set({ toolCount }),
-      setAppInfo: (info) =>
-        set({
-          appName: info.name?.trim() || null,
-          appDescription: info.description?.trim() || null,
-          uiHints: info.uiHints ?? null,
-        }),
+      setAppName: (name) => set({ appName: name?.trim() || null }),
       setConnectionId: (connectionId) => set({ connectionId }),
       disconnect: () => {
         writeSessionToken('');
@@ -83,11 +60,7 @@ export const useWebMCPStore = create<WebMCPState>()(
           bearerToken: '',
           status: 'not-connected',
           error: null,
-          toolCount: 0,
           appName: null,
-          appDescription: null,
-          uiHints: null,
-          checkedAt: null,
         });
       },
     }),

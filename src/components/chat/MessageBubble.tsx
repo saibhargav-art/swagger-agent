@@ -169,7 +169,7 @@ function RuntimeTraceCard({ steps }: { steps: RuntimeTraceStep[] }) {
             <div key={`${step.name}-${index}`} className="rounded-md border border-slate-200 bg-slate-50 p-3">
               <div className="flex items-center gap-2">
                 <StatusBadge status={step.status ?? (step.ok ? 'success' : 'error')} />
-                <span className="font-mono text-xs font-medium text-slate-800">{step.name}</span>
+                <span className="text-xs font-medium text-slate-800">{humanizeFieldName(step.name)}</span>
               </div>
               {isDisplayable(step.input) ? (
                 <div className="mt-2">
@@ -209,6 +209,9 @@ function StatusBadge({ status }: { status: 'success' | 'error' | 'attention' }) 
 }
 
 function ResultPreview({ result }: { result: unknown }) {
+  if (isRecord(result) && '$value' in result) {
+    return <ResultPreview result={result.$value} />;
+  }
   if (!result) return null;
 
   if (typeof result === 'string') {
