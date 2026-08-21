@@ -16,17 +16,14 @@ interface Props {
 }
 
 const providers: Array<{ id: StrandsModelProvider; label: string }> = [
-  { id: 'ollama', label: 'Ollama' },
   { id: 'openai', label: 'OpenAI' },
-  { id: 'bedrock', label: 'Bedrock' },
+  { id: 'anthropic', label: 'Claude' },
 ];
 
 export function AgentConnectionCard({ agent, onConnect, onDisconnect }: Props) {
-  const canConnect = agent.modelProvider === 'ollama'
-    ? Boolean(agent.ollamaModel.trim())
-    : agent.modelProvider === 'openai'
-      ? Boolean(agent.openAiApiKey.trim() && agent.openAiModel.trim())
-      : true;
+  const canConnect = agent.modelProvider === 'openai'
+    ? Boolean(agent.openAiApiKey.trim() && agent.openAiModel.trim())
+    : Boolean(agent.anthropicApiKey.trim() && agent.anthropicModel.trim());
 
   return (
     <ConnectionCard
@@ -41,7 +38,7 @@ export function AgentConnectionCard({ agent, onConnect, onDisconnect }: Props) {
       onDisconnect={onDisconnect}
     >
       <Field label="Model provider">
-        <div className="grid grid-cols-3 gap-2" role="group" aria-label="Model provider">
+        <div className="grid grid-cols-2 gap-2" role="group" aria-label="Model provider">
           {providers.map((provider) => (
             <button
               key={provider.id}
@@ -60,16 +57,6 @@ export function AgentConnectionCard({ agent, onConnect, onDisconnect }: Props) {
           ))}
         </div>
       </Field>
-
-      {agent.modelProvider === 'ollama' ? (
-        <Field label="Ollama model" hint="A tool-capable model installed locally">
-          <Input
-            value={agent.ollamaModel}
-            placeholder="qwen2.5:7b"
-            onChange={(event) => agent.setOllamaConfig({ model: event.target.value })}
-          />
-        </Field>
-      ) : null}
 
       {agent.modelProvider === 'openai' ? (
         <div className="grid gap-4 sm:grid-cols-2">
@@ -91,10 +78,24 @@ export function AgentConnectionCard({ agent, onConnect, onDisconnect }: Props) {
         </div>
       ) : null}
 
-      {agent.modelProvider === 'bedrock' ? (
-        <p className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
-          Uses the AWS credentials configured for the local agent process.
-        </p>
+      {agent.modelProvider === 'anthropic' ? (
+        <div className="grid gap-4 sm:grid-cols-2">
+          <Field label="Anthropic API key">
+            <SecretInput
+              value={agent.anthropicApiKey}
+              autoComplete="off"
+              placeholder="sk-ant-..."
+              onChange={(event) => agent.setAnthropicConfig({ apiKey: event.target.value })}
+            />
+          </Field>
+          <Field label="Claude model">
+            <Input
+              value={agent.anthropicModel}
+              placeholder="claude-3-5-sonnet-latest"
+              onChange={(event) => agent.setAnthropicConfig({ model: event.target.value })}
+            />
+          </Field>
+        </div>
       ) : null}
     </ConnectionCard>
   );

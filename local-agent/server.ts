@@ -8,14 +8,7 @@ import {
   getCustomerConnection,
 } from './connections/customer-connections.js'
 import { releaseCustomerConnection, resolvePendingAction, runAgent, shutdownAgents } from './agent-runtime.js'
-import { getBrowserSignInStatus } from './runtime/browser-session.js'
 import type { RunAgentInput } from './runtime/types.js'
-import {
-  inspectBrowserSession,
-  inspectMcpServers,
-  navigateWithBrowserMcp,
-  resetBrowserSession,
-} from './tools/mcp-clients.js'
 
 const config = readConfig([])
 const port = Number(process.env.STRANDS_AGENT_PORT ?? 8787)
@@ -40,35 +33,23 @@ const server = http.createServer(async (req, res) => {
       ok: true,
       runtime: 'strands-local',
       defaultModelProvider: config.modelProvider,
-      ollamaBaseUrl: config.ollamaBaseUrl,
-      ollamaModel: config.ollamaModel,
-      mcpServers: {
-        browser: {
-          enabled: config.browserMcpEnabled,
-          configured: Boolean(config.browserMcpCommand),
-        },
-        context7: {
-          enabled: config.context7Enabled,
-          configured: Boolean(config.context7Command),
-        },
-      },
+      openAiModel: config.openAiModel,
+      anthropicModel: config.anthropicModel,
     })
     return
   }
 
   if (req.method === 'POST' && req.url === '/connections/customer') {
     try {
-      const body = await readJson<{ baseUrl?: string; loginUrl?: string; bearerToken?: string }>(req)
+      const body = await readJson<{ baseUrl?: string; bearerToken?: string }>(req)
       const connection = await connectCustomerApp({
         baseUrl: body.baseUrl ?? '',
-        loginUrl: body.loginUrl,
         bearerToken: body.bearerToken ?? '',
       })
       sendJson(res, 200, {
         ok: true,
         connectionId: connection.id,
         baseUrl: connection.baseUrl,
-        loginUrl: connection.loginUrl,
         appName: connection.discovery.appName,
         appDescription: connection.discovery.appDescription,
         uiHints: connection.discovery.uiHints,
@@ -116,7 +97,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson<{
         conversationId?: string
         approved?: boolean
-        kind?: 'write' | 'browser-login'
+        kind?: 'write'
         webmcpBearerToken?: string
         webmcpAuthHeader?: string
         webmcpAuthValue?: string
@@ -142,135 +123,38 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
-  if (req.method === 'POST' && req.url === '/browser-session/status') {
-    try {
-      const body = await readJson<{ conversationId?: string }>(req)
-      const result = await getBrowserSignInStatus(body.conversationId?.trim() || 'default')
-      sendJson(res, 200, result)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Browser session status check failed'
-      sendJson(res, 500, { error: message })
-    }
-    return
-  }
-
-  if (req.method === 'POST' && req.url === '/browser/status') {
-    try {
-      const body = await readJson<RunAgentInput>(req)
-      const result = await inspectBrowserSession(resolveBrowserConfig(body))
-      sendJson(res, 200, { ok: true, ...result })
-    } catch (err) {
-      sendJson(res, 500, { ok: false, error: err instanceof Error ? err.message : 'Browser status check failed' })
-    }
-    return
-  }
-
-  if (req.method === 'POST' && req.url === '/browser/open') {
-    try {
-      const body = await readJson<RunAgentInput & { targetUrl?: string }>(req)
-      const targetUrl = body.targetUrl ?? browserHomeUrl(body)
-      if (!targetUrl) {
-        sendJson(res, 400, { ok: false, error: 'Connect a customer app before opening the managed browser.' })
-        return
-      }
-      const result = await navigateWithBrowserMcp(resolveBrowserConfig(body), targetUrl, {
-        protectedOrigin: body.chatAppUrl,
-      })
-      sendJson(res, 200, {
-        ok: true,
-        pageUrl: result.pageUrl ?? targetUrl,
-        toolName: result.toolName,
-        result: result.result,
-      })
-    } catch (err) {
-      sendJson(res, 500, { ok: false, error: err instanceof Error ? err.message : 'Managed browser open failed' })
-    }
-    return
-  }
-
-  if (req.method === 'POST' && req.url === '/browser/reset') {
-    try {
-      const body = await readJson<RunAgentInput>(req)
-      const result = await resetBrowserSession(resolveBrowserConfig(body))
-      sendJson(res, 200, { ok: true, ...result })
-    } catch (err) {
-      sendJson(res, 500, { ok: false, error: err instanceof Error ? err.message : 'Managed browser reset failed' })
-    }
-    return
-  }
-
   if (req.method === 'POST' && req.url === '/model-health') {
     try {
       const body = await readJson<{
         modelProvider?: string
-        ollamaBaseUrl?: string
-        ollamaModel?: string
+        openAiApiKey?: string
+        openAiModel?: string
+        anthropicApiKey?: string
+        anthropicModel?: string
       }>(req)
 
-      if ((body.modelProvider ?? config.modelProvider) === 'ollama') {
-        const baseUrl = (body.ollamaBaseUrl ?? config.ollamaBaseUrl).replace('://localhost:', '://127.0.0.1:')
-        const model = body.ollamaModel ?? config.ollamaModel
-        const response = await fetch(`${baseUrl.replace(/\/$/, '')}/api/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            model,
-            stream: false,
-            messages: [{ role: 'user', content: 'Call the ping tool.' }],
-            tools: [
-              {
-                type: 'function',
-                function: {
-                  name: 'ping',
-                  description: 'Simple connectivity test tool.',
-                  parameters: {
-                    type: 'object',
-                    properties: {},
-                  },
-                },
-              },
-            ],
-          }),
-        })
-
-        const text = await response.text()
-        if (!response.ok) {
-          sendJson(res, 400, {
-            ok: false,
-            error: /does not support tools/i.test(text)
-              ? `Ollama model "${model}" does not support tool calling. Use qwen2.5:7b, qwen3:8b, or llama3.1:8b.`
-              : `Ollama model check failed: HTTP ${response.status} ${text}`,
-          })
+      const provider = body.modelProvider ?? config.modelProvider
+      if (provider === 'openai') {
+        if (!(body.openAiApiKey ?? config.openAiApiKey)) {
+          sendJson(res, 400, { ok: false, error: 'OpenAI API key is required.' })
           return
         }
-
-        sendJson(res, 200, { ok: true, modelProvider: 'ollama', model })
+        sendJson(res, 200, { ok: true, modelProvider: provider, model: body.openAiModel ?? config.openAiModel })
         return
       }
 
-      sendJson(res, 200, { ok: true, modelProvider: body.modelProvider ?? config.modelProvider })
+      if (provider === 'anthropic') {
+        if (!(body.anthropicApiKey ?? config.anthropicApiKey)) {
+          sendJson(res, 400, { ok: false, error: 'Anthropic API key is required for Claude.' })
+          return
+        }
+        sendJson(res, 200, { ok: true, modelProvider: provider, model: body.anthropicModel ?? config.anthropicModel })
+        return
+      }
+
+      sendJson(res, 400, { ok: false, error: 'Unsupported model provider. Use OpenAI or Claude.' })
     } catch (err) {
       sendJson(res, 500, { ok: false, error: err instanceof Error ? err.message : 'Model health check failed' })
-    }
-    return
-  }
-
-  if (req.method === 'POST' && req.url === '/mcp-health') {
-    try {
-      const body = await readJson<RunAgentInput>(req)
-      const diagnostics = await inspectMcpServers({
-        ...config,
-        browserMcpEnabled: body.browserMcpEnabled ?? config.browserMcpEnabled,
-        browserMcpCommand: body.browserMcpCommand ?? config.browserMcpCommand,
-        browserMcpArgs: body.browserMcpArgs ?? config.browserMcpArgs,
-        context7Enabled: body.context7Enabled ?? config.context7Enabled,
-        context7Command: body.context7Command ?? config.context7Command,
-        context7Args: body.context7Args ?? config.context7Args,
-      })
-
-      sendJson(res, 200, { ok: true, diagnostics })
-    } catch (err) {
-      sendJson(res, 500, { ok: false, error: err instanceof Error ? err.message : 'MCP health check failed' })
     }
     return
   }
@@ -314,10 +198,7 @@ function resolveCustomerConnection(input: RunAgentInput): RunAgentInput {
   return {
     ...input,
     webmcpBaseUrl: connection.baseUrl,
-    webmcpLoginUrl: connection.loginUrl,
-    browserStartUrl: connection.loginUrl ?? connection.baseUrl,
     webmcpBearerToken: connection.bearerToken,
-    webmcpUiHints: connection.discovery.uiHints,
     allowWebMcpWrites: false,
   }
 }
@@ -328,22 +209,6 @@ function optionalCustomerConnection(connectionId: string) {
   } catch {
     return undefined
   }
-}
-
-function resolveBrowserConfig(input: RunAgentInput) {
-  return {
-    browserMcpEnabled: input.browserMcpEnabled ?? config.browserMcpEnabled,
-    browserMcpCommand: input.browserMcpCommand ?? config.browserMcpCommand,
-    browserMcpArgs: input.browserMcpArgs ?? config.browserMcpArgs,
-  }
-}
-
-function browserHomeUrl(input: RunAgentInput): string | undefined {
-  if (input.customerConnectionId) {
-    const connection = getCustomerConnection(input.customerConnectionId)
-    return connection.loginUrl ?? connection.baseUrl
-  }
-  return input.webmcpLoginUrl ?? input.browserStartUrl ?? input.webmcpBaseUrl
 }
 
 function isLoopback(address: string | undefined): boolean {

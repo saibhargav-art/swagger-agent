@@ -43,7 +43,7 @@ export default function MessageList({
           <p className="mt-2 max-w-xl text-sm leading-6 text-slate-500">
             {websiteConnected
               ? `${tools.length} tools are available. Ask naturally and the local agent will choose the appropriate action.`
-              : 'The local agent uses the customer app contract for authorized actions and a managed browser for interactive pages.'}
+              : 'Connect the local agent and a customer app that exposes WebMCP tools. The current demo executes those tools directly.'}
           </p>
 
           {!agentConnected || !websiteConnected ? (

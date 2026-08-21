@@ -7,14 +7,12 @@ const MAX_CONNECTIONS = 20
 
 export type CustomerConnectionInput = {
   baseUrl: string
-  loginUrl?: string
   bearerToken: string
 }
 
 export type CustomerConnection = {
   id: string
   baseUrl: string
-  loginUrl?: string
   bearerToken: string
   discovery: WebMcpDiscovery
   createdAt: number
@@ -26,7 +24,6 @@ const connections = new Map<string, CustomerConnection>()
 export async function connectCustomerApp(input: CustomerConnectionInput): Promise<CustomerConnection> {
   pruneConnections()
   const baseUrl = normalizeBaseUrl(input.baseUrl)
-  const loginUrl = normalizeOptionalUrl(input.loginUrl, 'Customer sign-in URL')
   const bearerToken = normalizeToken(input.bearerToken)
   validateToken(bearerToken)
 
@@ -38,7 +35,6 @@ export async function connectCustomerApp(input: CustomerConnectionInput): Promis
   const now = Date.now()
   const existing = [...connections.values()].find((connection) =>
     connection.baseUrl === baseUrl
-    && connection.loginUrl === loginUrl
     && connection.bearerToken === bearerToken,
   )
   if (existing) {
@@ -50,7 +46,6 @@ export async function connectCustomerApp(input: CustomerConnectionInput): Promis
   const connection: CustomerConnection = {
     id: randomUUID(),
     baseUrl,
-    loginUrl,
     bearerToken,
     discovery,
     createdAt: now,
@@ -89,13 +84,6 @@ function normalizeBaseUrl(value: string): string {
   parsed.search = ''
   parsed.hash = ''
   return parsed.href.replace(/\/+$/, '')
-}
-
-function normalizeOptionalUrl(value: string | undefined, label: string): string | undefined {
-  if (!value?.trim()) return undefined
-  const parsed = parseHttpUrl(value, `${label} must be a valid HTTP or HTTPS URL.`)
-  parsed.hash = ''
-  return parsed.href
 }
 
 function parseHttpUrl(value: string, message: string): URL {

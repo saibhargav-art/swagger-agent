@@ -24,7 +24,7 @@ export function AdvancedConnectionSettings({ agent }: Props) {
         <Settings2 size={17} className="shrink-0 text-slate-500" />
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-semibold text-slate-800">Advanced settings</span>
-          <span className="mt-0.5 block text-xs text-slate-500">Agent runtime, managed browser, and model settings</span>
+          <span className="mt-0.5 block text-xs text-slate-500">Agent runtime endpoint</span>
         </span>
         <ChevronDown size={17} className={`shrink-0 transition-transform ${open ? 'rotate-180' : ''}`} />
       </button>
@@ -35,26 +35,6 @@ export function AdvancedConnectionSettings({ agent }: Props) {
             <Field label="Agent service URL">
               <Input type="url" value={agent.agentUrl} onChange={(event) => agent.setAgentUrl(event.target.value)} />
             </Field>
-            {agent.modelProvider === 'ollama' ? (
-              <Field label="Ollama service URL">
-                <Input type="url" value={agent.ollamaBaseUrl} onChange={(event) => agent.setOllamaConfig({ baseUrl: event.target.value })} />
-              </Field>
-            ) : null}
-          </div>
-
-          <div className="grid content-start gap-4">
-            <label className="flex items-start justify-between gap-4 rounded-md border border-slate-200 bg-white px-3 py-3">
-              <span>
-                <span className="block text-sm font-medium text-slate-800">Managed browser</span>
-                <span className="mt-0.5 block text-xs leading-5 text-slate-500">Separate desktop session for login, OTP, and UI-only actions</span>
-              </span>
-              <input
-                type="checkbox"
-                checked={agent.browserMcpEnabled}
-                onChange={(event) => agent.setBrowserMcpConfig({ enabled: event.target.checked })}
-                className="mt-1 h-4 w-4 shrink-0 accent-indigo-600"
-              />
-            </label>
           </div>
         </div>
       ) : null}

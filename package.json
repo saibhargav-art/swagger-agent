@@ -13,13 +13,11 @@
     "agent:restart:bg": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restart-agent.ps1 -Background",
     "agent:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/restart-agent.ps1 -StopOnly",
     "agent:check": "tsc -p local-agent/tsconfig.json --noEmit",
-    "agent:test:browser-session": "tsx --tsconfig local-agent/tsconfig.json scripts/test-browser-session.ts",
     "agent:test:tool-planner": "tsx --tsconfig local-agent/tsconfig.json scripts/test-tool-planner.ts",
     "smoke:connections": "node scripts/smoke-connections.mjs"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "@playwright/mcp": "0.0.78",
+    "@anthropic-ai/sdk": "^0.104.2",
     "@strands-agents/sdk": "^1.7.0",
     "clsx": "^2.1.1",
     "lucide-react": "^0.441.0",

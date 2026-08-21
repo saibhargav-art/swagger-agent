@@ -4,7 +4,6 @@ import { AgentConnectionCard } from '@/components/connections/AgentConnectionCar
 import { ConnectionBadge } from '@/components/connections/ConnectionCard';
 import { CustomerAppConnectionCard } from '@/components/connections/CustomerAppConnectionCard';
 import { DiscoveredToolsSection } from '@/components/connections/DiscoveredToolsSection';
-import { ManagedBrowserPanel } from '@/components/connections/ManagedBrowserPanel';
 import { Button } from '@/components/ui/Button';
 import { useConnections } from '@/hooks/useConnections';
 import { useTools } from '@/hooks/useTools';
@@ -12,12 +11,13 @@ import { useTools } from '@/hooks/useTools';
 export default function ConnectionsPage() {
   const connection = useConnections();
   const { tools, isLoading, error } = useTools();
-  const modelConfigured = connection.agent.modelProvider === 'ollama'
-    ? Boolean(connection.agent.ollamaModel.trim())
-    : connection.agent.modelProvider === 'openai'
-      ? Boolean(connection.agent.openAiApiKey.trim() && connection.agent.openAiModel.trim())
-      : true;
-  const canConnectAll = Boolean(connection.customerUrl.trim() && connection.accessToken.trim() && modelConfigured);
+  const modelConfigured = connection.agent.modelProvider === 'openai'
+    ? Boolean(connection.agent.openAiApiKey.trim() && connection.agent.openAiModel.trim())
+    : Boolean(connection.agent.anthropicApiKey.trim() && connection.agent.anthropicModel.trim());
+  const canConnectAll = Boolean(connection.agent.agentUrl.trim() && connection.customerUrl.trim() && connection.accessToken.trim() && modelConfigured);
+  const connectAllTitle = canConnectAll
+    ? 'Connect the local agent and customer app'
+    : 'Enter the agent URL, model key, customer app URL, and access token';
 
   return (
     <div className="flex min-w-0 flex-1 overflow-y-auto bg-slate-50">
@@ -26,7 +26,7 @@ export default function ConnectionsPage() {
           <div className="min-w-0">
             <h1 className="text-xl font-semibold text-slate-950">Connections</h1>
             <p className="mt-1 text-sm text-slate-500">
-              Connect the local agent, then connect a customer app that registers WebMCP tools.
+              The frontend connects the agent and customer app, then sends prompts. The Strands runtime plans and executes WebMCP tools.
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -38,13 +38,17 @@ export default function ConnectionsPage() {
             <Button
               onClick={connection.connectAll}
               disabled={!canConnectAll || connection.connectingAll}
-              title={canConnectAll ? 'Connect the agent and customer app' : 'Enter the customer app URL and access token'}
+              title={connectAllTitle}
             >
               {connection.connectingAll ? <Loader2 size={15} className="animate-spin" /> : <PlugZap size={15} />}
               {connection.connectingAll ? 'Connecting...' : 'Connect all'}
             </Button>
           </div>
         </header>
+
+        <section className="mt-4 rounded-lg border border-slate-200 bg-white px-4 py-3 text-sm text-slate-600">
+          <span className="font-medium text-slate-900">Flow:</span> Chat UI connects services and displays results. The local Strands runtime discovers WebMCP capabilities, chooses tools, fills parameters, enforces write confirmation, and returns a clean response.
+        </section>
 
         <div className="grid gap-4 py-5 lg:grid-cols-2">
           <AgentConnectionCard
@@ -57,10 +61,8 @@ export default function ConnectionsPage() {
             message={connection.customer.error}
             toolCount={connection.customer.toolCount}
             url={connection.customerUrl}
-            loginUrl={connection.loginUrl}
             token={connection.accessToken}
             onUrlChange={connection.setCustomerUrl}
-            onLoginUrlChange={connection.setLoginUrl}
             onTokenChange={connection.setAccessToken}
             onConnect={() => void connection.connectWebsite()}
             onDisconnect={connection.disconnectWebsite}
@@ -70,17 +72,6 @@ export default function ConnectionsPage() {
         <AdvancedConnectionSettings
           agent={connection.agent}
         />
-
-        <div className="py-5">
-          <ManagedBrowserPanel
-            status={connection.browserStatus}
-            busy={connection.browserBusy}
-            canOpen={Boolean(connection.customer.connectionId || connection.customerUrl.trim())}
-            onOpen={() => void connection.openBrowser()}
-            onCheck={() => void connection.checkBrowser()}
-            onReset={() => void connection.resetBrowser()}
-          />
-        </div>
 
         <DiscoveredToolsSection
           tools={tools}

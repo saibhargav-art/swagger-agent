@@ -2,11 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   connectCustomerApp,
   disconnectCustomerApp,
-  getManagedBrowserStatus,
-  openManagedBrowser,
-  resetManagedBrowser,
   testAgentConnection,
-  type ManagedBrowserStatus,
 } from '@/services/connections/ConnectionService';
 import { useAgentRuntimeStore } from '@/store/agentRuntimeStore';
 import { useToolStore } from '@/store/toolStore';
@@ -17,15 +13,32 @@ export function useConnections() {
   const customer = useWebMCPStore();
   const { setTools, setLoading: setToolsLoading, setError: setToolsError } = useToolStore();
   const [customerUrl, setCustomerUrl] = useState(customer.baseUrl);
-  const [loginUrl, setLoginUrl] = useState(customer.loginUrl);
   const [accessToken, setAccessToken] = useState(customer.bearerToken);
   const [connectingAll, setConnectingAll] = useState(false);
-  const [browserStatus, setBrowserStatus] = useState<ManagedBrowserStatus | null>(null);
-  const [browserBusy, setBrowserBusy] = useState(false);
 
   useEffect(() => setCustomerUrl(customer.baseUrl), [customer.baseUrl]);
-  useEffect(() => setLoginUrl(customer.loginUrl), [customer.loginUrl]);
   useEffect(() => setAccessToken(customer.bearerToken), [customer.bearerToken]);
+
+  const invalidateCustomerConnection = useCallback(() => {
+    if (customer.status === 'not-connected' && !customer.connectionId && customer.toolCount === 0) return;
+    customer.setConnectionId('');
+    customer.setStatus('not-connected');
+    customer.setError(null);
+    customer.setToolCount(0);
+    customer.setAppInfo({ name: null, description: null, uiHints: null });
+    setTools([]);
+    setToolsError(null);
+  }, [customer, setTools, setToolsError]);
+
+  const updateCustomerUrl = useCallback((value: string) => {
+    setCustomerUrl(value);
+    if (value.trim() !== customer.baseUrl) invalidateCustomerConnection();
+  }, [customer.baseUrl, invalidateCustomerConnection]);
+
+  const updateAccessToken = useCallback((value: string) => {
+    setAccessToken(value);
+    if (value.trim() !== customer.bearerToken) invalidateCustomerConnection();
+  }, [customer.bearerToken, invalidateCustomerConnection]);
 
   const connectAgent = useCallback(async (): Promise<boolean> => {
     agent.setConnectionState('connecting');
@@ -41,6 +54,11 @@ export function useConnections() {
   }, [agent]);
 
   const connectWebsite = useCallback(async (): Promise<boolean> => {
+    if (agent.status !== 'connected') {
+      const agentReady = await connectAgent();
+      if (!agentReady) return false;
+    }
+
     customer.setStatus('connecting');
     customer.setError(null);
     setToolsLoading(true);
@@ -49,11 +67,9 @@ export function useConnections() {
       const result = await connectCustomerApp({
         agentUrl: agent.agentUrl,
         baseUrl: customerUrl,
-        loginUrl,
         bearerToken: accessToken,
       });
       customer.setBaseUrl(result.baseUrl);
-      customer.setLoginUrl(result.loginUrl);
       customer.setBearerToken(result.bearerToken);
       customer.setConnectionId(result.connectionId);
       customer.setToolCount(result.tools.length);
@@ -73,71 +89,18 @@ export function useConnections() {
     } finally {
       setToolsLoading(false);
     }
-  }, [accessToken, agent.agentUrl, customer, customerUrl, loginUrl, setTools, setToolsError, setToolsLoading]);
+  }, [accessToken, agent.status, agent.agentUrl, connectAgent, customer, customerUrl, setTools, setToolsError, setToolsLoading]);
 
   const connectAll = useCallback(async () => {
     setConnectingAll(true);
     try {
-      const agentReady = await connectAgent();
-      if (agentReady) await connectWebsite();
+      await connectWebsite();
     } finally {
       setConnectingAll(false);
     }
-  }, [connectAgent, connectWebsite]);
+  }, [connectWebsite]);
 
   const disconnectAgent = useCallback(() => agent.disconnect(), [agent]);
-
-  const checkBrowser = useCallback(async () => {
-    setBrowserBusy(true);
-    try {
-      setBrowserStatus(await getManagedBrowserStatus(agent));
-    } catch (error) {
-      setBrowserStatus({
-        enabled: agent.browserMcpEnabled,
-        configured: Boolean(agent.browserMcpCommand),
-        connected: false,
-        error: error instanceof Error ? error.message : 'Could not check the managed browser.',
-      });
-    } finally {
-      setBrowserBusy(false);
-    }
-  }, [agent]);
-
-  const openBrowser = useCallback(async () => {
-    setBrowserBusy(true);
-    try {
-      setBrowserStatus(await openManagedBrowser(agent, {
-        connectionId: customer.connectionId,
-        baseUrl: customer.baseUrl || customerUrl,
-        loginUrl: customer.loginUrl || loginUrl,
-      }));
-    } catch (error) {
-      setBrowserStatus({
-        enabled: agent.browserMcpEnabled,
-        configured: Boolean(agent.browserMcpCommand),
-        connected: false,
-        error: error instanceof Error ? error.message : 'Could not open the managed browser.',
-      });
-    } finally {
-      setBrowserBusy(false);
-    }
-  }, [agent, customer.baseUrl, customer.connectionId, customer.loginUrl, customerUrl, loginUrl]);
-
-  const resetBrowser = useCallback(async () => {
-    setBrowserBusy(true);
-    try {
-      setBrowserStatus(await resetManagedBrowser(agent));
-    } catch (error) {
-      setBrowserStatus({
-        enabled: agent.browserMcpEnabled,
-        configured: Boolean(agent.browserMcpCommand),
-        connected: false,
-        error: error instanceof Error ? error.message : 'Could not reset the managed browser.',
-      });
-    } finally {
-      setBrowserBusy(false);
-    }
-  }, [agent]);
 
   const disconnectWebsite = useCallback(async () => {
     const connectionId = customer.connectionId;
@@ -145,7 +108,6 @@ export function useConnections() {
     setTools([]);
     setToolsError(null);
     setCustomerUrl('');
-    setLoginUrl('');
     setAccessToken('');
     if (connectionId) {
       await disconnectCustomerApp(agent.agentUrl, connectionId).catch(() => undefined);
@@ -156,21 +118,14 @@ export function useConnections() {
     agent,
     customer,
     customerUrl,
-    setCustomerUrl,
-    loginUrl,
-    setLoginUrl,
+    setCustomerUrl: updateCustomerUrl,
     accessToken,
-    setAccessToken,
+    setAccessToken: updateAccessToken,
     connectingAll,
-    browserStatus,
-    browserBusy,
     connectAgent,
     connectWebsite,
     connectAll,
     disconnectAgent,
     disconnectWebsite,
-    checkBrowser,
-    openBrowser,
-    resetBrowser,
   };
 }

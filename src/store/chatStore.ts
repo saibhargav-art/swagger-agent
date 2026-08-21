@@ -22,6 +22,7 @@ interface ChatState {
     updates: Partial<Message>
   ) => void;
   setStreaming: (streaming: boolean) => void;
+  cleanupAfterReload: () => void;
 
   // Derived
   getActiveConversation: () => Conversation | undefined;
@@ -108,6 +109,26 @@ export const useChatStore = create<ChatState>()(persist((set, get) => ({
 
   setStreaming: (isStreaming) => set({ isStreaming }),
 
+  cleanupAfterReload: () => {
+    set((state) => {
+      const conversations = state.conversations
+        .map((conversation) => ({
+          ...conversation,
+          messages: sanitizePersistedMessages(conversation.messages),
+        }))
+        .filter((conversation) => conversation.messages.length > 0);
+      const activeConversationId = conversations.some((conversation) => conversation.id === state.activeConversationId)
+        ? state.activeConversationId
+        : conversations[0]?.id ?? null;
+
+      return {
+        conversations,
+        activeConversationId,
+        isStreaming: false,
+      };
+    });
+  },
+
   getActiveConversation: () => {
     const { conversations, activeConversationId } = get();
     return conversations.find((c) => c.id === activeConversationId);
@@ -118,11 +139,22 @@ export const useChatStore = create<ChatState>()(persist((set, get) => ({
   partialize: (state) => ({
     conversations: state.conversations.map((conversation) => ({
       ...conversation,
-      messages: conversation.messages.map((message) => ({
-        ...message,
-        isStreaming: false,
-      })),
+      messages: sanitizePersistedMessages(conversation.messages),
     })),
     activeConversationId: state.activeConversationId,
   }),
 }));
+
+function sanitizePersistedMessages(messages: Message[]): Message[] {
+  return messages
+    .map((message) => ({
+      ...message,
+      isStreaming: false,
+      runtimeConfirmation: undefined,
+      runtimeTrace: undefined,
+    }))
+    .filter((message) => {
+      if (message.role === 'user') return Boolean(message.content.trim());
+      return Boolean(message.content.trim());
+    });
+}

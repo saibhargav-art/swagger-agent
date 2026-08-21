@@ -20,7 +20,7 @@ export function DiscoveredToolsSection({ tools, isLoading, error, onReload }: Pr
       <button
         type="button"
         onClick={() => setOpen((value) => !value)}
-        disabled={tools.length === 0}
+        disabled={!isLoading && !error && tools.length === 0}
         aria-expanded={open}
         className="flex w-full items-center gap-3 rounded-lg border border-slate-200 bg-white px-4 py-3 text-left disabled:cursor-not-allowed disabled:opacity-60"
       >

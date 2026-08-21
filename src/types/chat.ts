@@ -4,7 +4,7 @@ export interface RuntimeConfirmation {
   runId: string;
   title: string;
   details: Record<string, unknown>;
-  kind?: 'write' | 'browser-login';
+  kind?: 'write';
   confirmLabel?: string;
   cancelLabel?: string;
 }

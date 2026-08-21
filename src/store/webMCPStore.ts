@@ -7,7 +7,6 @@ const TOKEN_STORAGE_KEY = 'swagger-agent-webmcp-token';
 interface WebMCPState {
   connectionId: string;
   baseUrl: string;
-  loginUrl: string;
   bearerToken: string;
   status: ConnectionStatus;
   error: string | null;
@@ -16,7 +15,6 @@ interface WebMCPState {
   appDescription: string | null;
   uiHints: Record<string, unknown> | null;
   setBaseUrl: (baseUrl: string) => void;
-  setLoginUrl: (loginUrl: string) => void;
   setBearerToken: (bearerToken: string) => void;
   checkedAt: number | null;
   setStatus: (status: ConnectionStatus) => void;
@@ -32,7 +30,6 @@ export const useWebMCPStore = create<WebMCPState>()(
     (set) => ({
       connectionId: '',
       baseUrl: import.meta.env.VITE_WEBMCP_BASE_URL ?? '',
-      loginUrl: import.meta.env.VITE_WEBMCP_LOGIN_URL ?? '',
       bearerToken: readSessionToken(),
       status: 'not-connected',
       error: null,
@@ -53,11 +50,20 @@ export const useWebMCPStore = create<WebMCPState>()(
           uiHints: null,
           checkedAt: null,
         }),
-      setLoginUrl: (loginUrl: string) => set({ loginUrl: loginUrl.trim() }),
       setBearerToken: (bearerToken) => {
         const token = bearerToken.trim();
         writeSessionToken(token);
-        set({ connectionId: '', bearerToken: token, status: 'not-connected', error: null, checkedAt: null, uiHints: null });
+        set({
+          connectionId: '',
+          bearerToken: token,
+          status: 'not-connected',
+          error: null,
+          checkedAt: null,
+          toolCount: 0,
+          appName: null,
+          appDescription: null,
+          uiHints: null,
+        });
       },
       setStatus: (status) => set({ status, checkedAt: status === 'connecting' ? null : Date.now() }),
       setError: (error) => set({ error }),
@@ -74,7 +80,6 @@ export const useWebMCPStore = create<WebMCPState>()(
         set({
           connectionId: '',
           baseUrl: '',
-          loginUrl: '',
           bearerToken: '',
           status: 'not-connected',
           error: null,
@@ -90,7 +95,6 @@ export const useWebMCPStore = create<WebMCPState>()(
       name: 'swagger-agent-webmcp',
       partialize: (state) => ({
         baseUrl: state.baseUrl,
-        loginUrl: state.loginUrl,
       }),
     },
   ),

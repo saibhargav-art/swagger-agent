@@ -24,7 +24,7 @@ export type AgentRuntimeEvent =
       runId: string
       title: string
       details: Record<string, unknown>
-      kind?: 'write' | 'browser-login'
+      kind?: 'write'
       confirmLabel?: string
       cancelLabel?: string
     }

@@ -1,36 +1,24 @@
 import type { LocalAgentConfig } from '../config.js'
-import type { WebMcpUiHints } from '../types.js'
-
 export type RunAgentInput = {
   message: string
   conversationId?: string
   modelProvider?: LocalAgentConfig['modelProvider']
   openAiApiKey?: string
   openAiModel?: string
-  ollamaBaseUrl?: string
-  ollamaModel?: string
-  browserMcpEnabled?: boolean
-  browserMcpCommand?: string
-  browserMcpArgs?: string[]
-  context7Enabled?: boolean
-  context7Command?: string
-  context7Args?: string[]
+  anthropicApiKey?: string
+  anthropicModel?: string
   customerConnectionId?: string
   webmcpBaseUrl?: string
-  webmcpLoginUrl?: string
-  browserStartUrl?: string
-  chatAppUrl?: string
   webmcpBearerToken?: string
   webmcpAuthHeader?: string
   webmcpAuthValue?: string
-  webmcpUiHints?: WebMcpUiHints
   allowWebMcpWrites?: boolean
 }
 
 export type ConfirmPendingActionInput = {
   conversationId: string
   approved: boolean
-  kind?: 'write' | 'browser-login'
+  kind?: 'write'
   webmcpBearerToken?: string
   webmcpAuthHeader?: string
   webmcpAuthValue?: string
@@ -54,7 +42,7 @@ export type RunAgentResult = {
     toolName: string
     title: string
     details: Record<string, unknown>
-    kind?: 'write' | 'browser-login'
+    kind?: 'write'
     confirmLabel?: string
     cancelLabel?: string
   }

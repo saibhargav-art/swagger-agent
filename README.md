@@ -5,9 +5,8 @@ Single React application for AI chat plus customer website tool execution.
 The app connects to:
 
 - a local Strands agent service that owns model/tool orchestration
-- a customer website that hosts `/webapi.json`
+- a customer website that exposes WebMCP capabilities
 - an authenticated customer API session, passed as a bearer token
-- a separate persistent Playwright browser session for visible customer pages
 
 The customer backend remains the source of truth for login, roles, scopes, and permissions.
 
@@ -37,13 +36,13 @@ Use it to test the standard agent flow without disturbing the React chat app:
 npm run agent:poc -- "list the available customer actions"
 ```
 
-With a customer website connected by `/webapi.json`:
+With a customer website connected through WebMCP:
 
 ```bash
 WEBMCP_BASE_URL=http://localhost:5173 WEBMCP_BEARER_TOKEN=<token> npm run agent:poc -- "search orders for vijay"
 ```
 
-The Strands runtime loads WebMCP tools, can attach Playwright MCP for a separate persistent browser, and lets the model choose tools and parameters. Runtime policy still blocks write actions unless `ALLOW_WEBMCP_WRITES=true` is set.
+The Strands runtime loads WebMCP tools and lets the model choose tools and parameters. Runtime policy still blocks write actions until the user confirms them in chat.
 
 To route the React chat through the local Strands HTTP service:
 
@@ -52,26 +51,23 @@ npm run agent:server
 VITE_STRANDS_AGENT_URL=http://127.0.0.1:8787 npm run dev
 ```
 
-Select Ollama/OpenAI/Bedrock from the Connections page. Customer credentials are sent once to the loopback-only local service; chat requests use an opaque local connection ID.
+Select OpenAI or Claude from the Connections page. Customer credentials are sent once to the loopback-only local service; chat requests use an opaque local connection ID.
 
 ## Connection Flow
 
 1. Open `Connections`.
-2. Select the local model provider and model. Ollama runs locally; OpenAI needs an API key; Bedrock uses the local AWS environment.
-3. Enter the customer app URL that publishes `/webapi.json`.
+2. Select OpenAI or Claude and enter the provider API key.
+3. Enter the customer app URL that exposes WebMCP capabilities.
 4. Paste the logged-in customer's access token and select **Connect all**.
 5. Verify the discovered tools, then use chat for customer-app actions.
 
-Service URLs, an optional customer sign-in route, and managed-browser settings live under **Advanced settings**. They normally keep their defaults.
-The managed browser starts lazily on the first browser-only request, so connecting the local agent does not open an empty browser window.
-
-For browser-only pages, Playwright uses a separate persistent profile. If the customer app redirects to sign-in, complete login in that managed browser and select **Continue after sign-in** in chat. The agent verifies the session and resumes the originally requested page. Passwords, MFA codes, and OTPs never pass through the chat app.
+The agent service URL lives under **Advanced settings**. Browser automation is intentionally disabled in this branch so the demo remains fast and tool-focused.
 
 ## Customer Contract
 
-The customer app only needs to host a JSON contract and secure backend endpoints.
+The customer app should expose WebMCP capabilities and secure backend endpoints. Capabilities can come from declarative markup, imperative registration, or an optional contract file for compatibility.
 
-Minimum `webapi.json` shape:
+Optional `webapi.json` compatibility shape:
 
 ```json
 {
@@ -122,7 +118,7 @@ Minimum `webapi.json` shape:
 }
 ```
 
-`servers[0].url` is the backend that executes tools. The website URL is only used for discovery.
+`servers[0].url` is the backend that executes tools when a contract file is used. The website URL is used for discovery.
 
 ## Folder Structure
 
@@ -147,7 +143,6 @@ src/
   utils/
 local-agent/
   connections/
-  models/
   runtime/
   tools/
 ```
@@ -162,7 +157,7 @@ The local Strands agent decides which tools to call and what parameters to use. 
 
 ## Security Model
 
-The local agent loads `/webapi.json`, keeps the customer token in memory, and forwards it only to the declared tool backend. The static contract describes capabilities; it is not an authorization authority.
+The local agent discovers WebMCP capabilities, keeps the customer token in memory, and forwards it only to the declared customer backend. The exposed capability metadata describes what the app can do; it is not an authorization authority.
 
 The customer backend must verify every tool call:
 

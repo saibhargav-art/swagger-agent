@@ -4,29 +4,21 @@ import type { Tool } from '@/types/tool';
 export interface AgentConnectionSettings {
   agentUrl: string;
   modelProvider: StrandsModelProvider;
-  ollamaBaseUrl: string;
-  ollamaModel: string;
   openAiApiKey: string;
   openAiModel: string;
-  browserMcpEnabled: boolean;
-  browserMcpCommand: string;
-  browserMcpArgs: string;
-  context7Enabled: boolean;
-  context7Command: string;
-  context7Args: string;
+  anthropicApiKey: string;
+  anthropicModel: string;
 }
 
 export interface CustomerAppConnection {
   agentUrl: string;
   baseUrl: string;
-  loginUrl: string;
   bearerToken: string;
 }
 
 export interface CustomerAppResult {
   connectionId: string;
   baseUrl: string;
-  loginUrl: string;
   bearerToken: string;
   tools: Tool[];
   appName?: string;
@@ -34,20 +26,9 @@ export interface CustomerAppResult {
   uiHints?: Record<string, unknown>;
 }
 
-export interface ManagedBrowserStatus {
-  ok?: boolean;
-  enabled: boolean;
-  configured: boolean;
-  connected: boolean;
-  pageUrl?: string;
-  profileDir?: string;
-  error?: string;
-}
-
 export async function connectCustomerApp(input: CustomerAppConnection): Promise<CustomerAppResult> {
   const agentUrl = normalizeServiceUrl(input.agentUrl, 'Agent service URL');
   const baseUrl = normalizeCustomerAppUrl(input.baseUrl);
-  const loginUrl = normalizeOptionalUrl(input.loginUrl, 'Login page URL');
   const bearerToken = normalizeAccessToken(input.bearerToken);
   const tokenError = validateAccessToken(bearerToken);
   if (tokenError) throw new Error(tokenError);
@@ -55,7 +36,6 @@ export async function connectCustomerApp(input: CustomerAppConnection): Promise<
   const result = await fetchJson<{
     connectionId?: string;
     baseUrl?: string;
-    loginUrl?: string;
     tools?: Tool[];
     appName?: string;
     appDescription?: string;
@@ -63,7 +43,7 @@ export async function connectCustomerApp(input: CustomerAppConnection): Promise<
   }>(`${agentUrl}/connections/customer`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ baseUrl, loginUrl: loginUrl || undefined, bearerToken }),
+    body: JSON.stringify({ baseUrl, bearerToken }),
   });
 
   if (!result.connectionId || !result.baseUrl || !Array.isArray(result.tools)) {
@@ -73,7 +53,6 @@ export async function connectCustomerApp(input: CustomerAppConnection): Promise<
   return {
     connectionId: result.connectionId,
     baseUrl: result.baseUrl,
-    loginUrl: result.loginUrl ?? loginUrl,
     bearerToken,
     tools: result.tools,
     appName: result.appName,
@@ -115,58 +94,19 @@ export async function testAgentConnection(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       modelProvider: settings.modelProvider,
-      ollamaBaseUrl: settings.ollamaBaseUrl,
-      ollamaModel: settings.ollamaModel,
+      openAiApiKey: settings.openAiApiKey,
       openAiModel: settings.openAiModel,
+      anthropicApiKey: settings.anthropicApiKey,
+      anthropicModel: settings.anthropicModel,
     }),
   });
   if (!model.ok) throw new Error(model.error ?? 'The selected model is not available.');
 
-  const modelLabel = settings.modelProvider === 'ollama'
-    ? settings.ollamaModel
-    : settings.modelProvider === 'openai'
-      ? settings.openAiModel
-      : 'Amazon Bedrock';
+  const modelLabel = settings.modelProvider === 'openai'
+    ? settings.openAiModel
+    : settings.anthropicModel;
 
   return { agentUrl, message: `${modelLabel} is ready.` };
-}
-
-export async function getManagedBrowserStatus(
-  settings: AgentConnectionSettings,
-): Promise<ManagedBrowserStatus> {
-  const agentUrl = normalizeServiceUrl(settings.agentUrl, 'Agent service URL');
-  return fetchJson<ManagedBrowserStatus>(`${agentUrl}/browser/status`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(browserPayload(settings)),
-  });
-}
-
-export async function openManagedBrowser(
-  settings: AgentConnectionSettings,
-  connection: { connectionId?: string; baseUrl?: string; loginUrl?: string },
-): Promise<ManagedBrowserStatus> {
-  const agentUrl = normalizeServiceUrl(settings.agentUrl, 'Agent service URL');
-  return fetchJson<ManagedBrowserStatus>(`${agentUrl}/browser/open`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      ...browserPayload(settings),
-      customerConnectionId: connection.connectionId || undefined,
-      webmcpBaseUrl: connection.baseUrl || undefined,
-      webmcpLoginUrl: connection.loginUrl || undefined,
-      chatAppUrl: typeof window !== 'undefined' ? window.location.origin : undefined,
-    }),
-  });
-}
-
-export async function resetManagedBrowser(settings: AgentConnectionSettings): Promise<ManagedBrowserStatus> {
-  const agentUrl = normalizeServiceUrl(settings.agentUrl, 'Agent service URL');
-  return fetchJson<ManagedBrowserStatus>(`${agentUrl}/browser/reset`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(browserPayload(settings)),
-  });
 }
 
 export function normalizeCustomerAppUrl(value: string): string {
@@ -188,16 +128,6 @@ export function normalizeCustomerAppUrl(value: string): string {
   return parsed.href.replace(/\/+$/g, '');
 }
 
-export function normalizeOptionalUrl(value: string, label: string): string {
-  if (!value.trim()) return '';
-  const parsed = parseHttpUrl(value, `${label} must be a valid HTTP or HTTPS URL.`);
-  if (typeof window !== 'undefined' && parsed.origin === window.location.origin) {
-    throw new Error(`${label} must belong to the customer app, not the chat app.`);
-  }
-  parsed.hash = '';
-  return parsed.href;
-}
-
 export function normalizeServiceUrl(value: string, label: string): string {
   return parseHttpUrl(value, `${label} must be a valid HTTP or HTTPS URL.`).href.replace(/\/+$/g, '');
 }
@@ -207,39 +137,14 @@ export function normalizeAccessToken(value: string): string {
 }
 
 function validateModelSettings(settings: AgentConnectionSettings): void {
-  if (settings.modelProvider === 'ollama') {
-    normalizeServiceUrl(settings.ollamaBaseUrl, 'Ollama URL');
-    if (!settings.ollamaModel.trim()) throw new Error('Enter an Ollama model name.');
-  }
   if (settings.modelProvider === 'openai') {
     if (!settings.openAiApiKey.trim()) throw new Error('Enter an OpenAI API key.');
     if (!settings.openAiModel.trim()) throw new Error('Enter an OpenAI model name.');
   }
-  if (settings.browserMcpEnabled && (!settings.browserMcpCommand.trim() || !settings.browserMcpArgs.trim())) {
-    throw new Error('Playwright browser automation is enabled but not configured.');
+  if (settings.modelProvider === 'anthropic') {
+    if (!settings.anthropicApiKey.trim()) throw new Error('Enter an Anthropic API key.');
+    if (!settings.anthropicModel.trim()) throw new Error('Enter a Claude model name.');
   }
-}
-
-function browserPayload(settings: AgentConnectionSettings) {
-  return {
-    browserMcpEnabled: settings.browserMcpEnabled,
-    browserMcpCommand: settings.browserMcpEnabled ? settings.browserMcpCommand || undefined : undefined,
-    browserMcpArgs: settings.browserMcpEnabled ? parseArgs(settings.browserMcpArgs) : [],
-  };
-}
-
-function parseArgs(value: string): string[] {
-  const trimmed = value.trim();
-  if (!trimmed) return [];
-
-  try {
-    const parsed = JSON.parse(trimmed) as unknown;
-    if (Array.isArray(parsed)) return parsed.map(String);
-  } catch {
-    // Support command-line style args in the UI.
-  }
-
-  return trimmed.match(/(?:[^\s"]+|"[^"]*")+/g)?.map((part) => part.replace(/^"|"$/g, '')) ?? [];
 }
 
 function validateAccessToken(token: string): string | null {

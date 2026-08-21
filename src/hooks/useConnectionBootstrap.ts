@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { useAgentRuntimeStore } from '@/store/agentRuntimeStore';
+import { useChatStore } from '@/store/chatStore';
 import { useToolStore } from '@/store/toolStore';
 import { useWebMCPStore } from '@/store/webMCPStore';
 import { connectCustomerApp, testAgentConnection } from '@/services/connections/ConnectionService';
@@ -16,7 +17,16 @@ export function useConnectionBootstrap(): void {
 }
 
 async function restoreConnections(): Promise<void> {
+  useChatStore.getState().cleanupAfterReload();
+
   const agent = useAgentRuntimeStore.getState();
+  if (!hasModelConfig(agent)) {
+    agent.setConnectionState('not-connected', null);
+    useWebMCPStore.getState().setStatus('not-connected');
+    useToolStore.getState().setTools([]);
+    return;
+  }
+
   agent.setConnectionState('connecting');
 
   try {
@@ -38,7 +48,6 @@ async function restoreConnections(): Promise<void> {
     const result = await connectCustomerApp({
       agentUrl: useAgentRuntimeStore.getState().agentUrl,
       baseUrl: app.baseUrl,
-      loginUrl: app.loginUrl,
       bearerToken: app.bearerToken,
     });
     useToolStore.getState().setTools(result.tools);
@@ -56,4 +65,10 @@ async function restoreConnections(): Promise<void> {
   } finally {
     useToolStore.getState().setLoading(false);
   }
+}
+
+function hasModelConfig(agent: ReturnType<typeof useAgentRuntimeStore.getState>): boolean {
+  if (!agent.agentUrl.trim()) return false;
+  if (agent.modelProvider === 'openai') return Boolean(agent.openAiApiKey.trim() && agent.openAiModel.trim());
+  return Boolean(agent.anthropicApiKey.trim() && agent.anthropicModel.trim());
 }

@@ -10,10 +10,8 @@ interface Props {
   message?: string | null;
   toolCount: number;
   url: string;
-  loginUrl: string;
   token: string;
   onUrlChange: (value: string) => void;
-  onLoginUrlChange: (value: string) => void;
   onTokenChange: (value: string) => void;
   onConnect: () => void;
   onDisconnect: () => void;
@@ -24,10 +22,8 @@ export function CustomerAppConnectionCard({
   message,
   toolCount,
   url,
-  loginUrl,
   token,
   onUrlChange,
-  onLoginUrlChange,
   onTokenChange,
   onConnect,
   onDisconnect,
@@ -53,15 +49,6 @@ export function CustomerAppConnectionCard({
           autoComplete="url"
           placeholder="https://customer-app.com"
           onChange={(event) => onUrlChange(event.target.value)}
-        />
-      </Field>
-      <Field label="Login page URL" hint="Optional, used to resume sign-in">
-        <Input
-          type="url"
-          value={loginUrl}
-          autoComplete="url"
-          placeholder="https://customer-app.com/login"
-          onChange={(event) => onLoginUrlChange(event.target.value)}
         />
       </Field>
       <Field label="User access token" hint="Kept for this browser tab only">
