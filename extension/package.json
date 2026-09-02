@@ -1,5 +1,5 @@
 {
-  "name": "webmcp-assistant-extension-poc",
+  "name": "@webmcp-assistant/extension",
   "version": "0.1.0",
   "private": true,
   "type": "module",

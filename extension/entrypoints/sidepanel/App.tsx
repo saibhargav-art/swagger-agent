@@ -1,182 +1,179 @@
-import { For, Show, createSignal, onCleanup, onMount } from 'solid-js'
-import type { WebMcpProperty, WebMcpResponse, WebMcpTool } from '../../shared/webmcp'
+import { Show, createSignal, onCleanup, onMount } from 'solid-js'
 
-type ActivePage = { title: string; url: string }
+import AssistantView, { type ChatMessage } from '../../components/AssistantView'
+import Confirmation from '../../components/Confirmation'
+import InspectorView from '../../components/InspectorView'
+import SettingsView from '../../components/SettingsView'
+import { connectAgent, returnToolResult, sendMessage, type ModelSettings, type ToolRequest } from '../../lib/agent-client'
+import { discoverTools, executeTool } from '../../lib/webmcp-client'
+import type { WebMcpTool } from '../../shared/webmcp'
+
+type ActivePage = { tabId?: number; title: string; url: string }
+type View = 'assistant' | 'tools' | 'settings'
+
+const sessionId = crypto.randomUUID()
+const conversationId = crypto.randomUUID()
+const defaultModel: ModelSettings = { provider: 'openai', apiKey: '', modelId: 'gpt-4o-mini' }
 
 export default function App() {
   const [page, setPage] = createSignal<ActivePage>({ title: 'No active page', url: '' })
-  const [tabId, setTabId] = createSignal<number>()
   const [tools, setTools] = createSignal<WebMcpTool[]>([])
-  const [selectedName, setSelectedName] = createSignal('')
-  const [fieldValues, setFieldValues] = createSignal<Record<string, string>>({})
-  const [result, setResult] = createSignal('')
-  const [error, setError] = createSignal('')
+  const [view, setView] = createSignal<View>('assistant')
+  const [messages, setMessages] = createSignal<ChatMessage[]>([])
+  const [draft, setDraft] = createSignal('')
   const [busy, setBusy] = createSignal(false)
+  const [executing, setExecuting] = createSignal(false)
+  const [agentConnected, setAgentConnected] = createSignal(false)
+  const [pageError, setPageError] = createSignal('')
+  const [pending, setPending] = createSignal<ToolRequest>()
+  const [model, setModel] = createSignal<ModelSettings>(defaultModel)
+  const approvedWriteScopes = new Set<string>()
+  const executionTabs = new Map<string, number>()
 
-  const refreshActivePage = async () => {
+  const approvalScope = (request: ToolRequest) => `${request.executionId}:${request.tool.name}`
+
+  const refreshPage = async () => {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true })
-    setTabId(tab?.id)
-    setPage({ title: tab?.title || 'Untitled page', url: tab?.url || '' })
-    if (tab?.id) await refreshTools(tab.id)
-    else setTools([])
-  }
-
-  const refreshTools = async (id = tabId()) => {
-    if (!id) return
-    setBusy(true)
-    setError('')
-    const response = await browser.runtime.sendMessage({ type: 'webmcp:list', tabId: id }) as WebMcpResponse<WebMcpTool[]>
-    setBusy(false)
-    if (!response.ok) {
+    setPage({ tabId: tab?.id, title: tab?.title || 'Untitled page', url: tab?.url || '' })
+    if (!tab?.id) return setTools([])
+    try {
+      setPageError('')
+      setTools(await discoverTools(tab.id))
+    } catch (error) {
       setTools([])
-      setError(response.error)
-      return
-    }
-    setTools(response.value)
-    if (!response.value.some((tool) => tool.name === selectedName())) {
-      selectTool(response.value[0]?.name || '', response.value)
+      setPageError(error instanceof Error ? error.message : String(error))
     }
   }
 
-  const selectTool = (name: string, available = tools()) => {
-    setSelectedName(name)
-    const properties = schemaProperties(available.find((tool) => tool.name === name))
-    setFieldValues(Object.fromEntries(
-      Object.entries(properties).map(([key, property]) => [key, property.default == null ? '' : String(property.default)]),
-    ))
-    setError('')
-    setResult('')
+  const execute = async (name: string, input: Record<string, unknown>, tabId = page().tabId) => {
+    if (!tabId) throw new Error('There is no active webpage.')
+    return executeTool(tabId, name, input)
   }
 
-  const runSelectedTool = async () => {
-    const id = tabId()
-    const toolName = selectedName()
-    if (!id || !toolName) return
-
-    const selected = tools().find((tool) => tool.name === toolName)
-    const properties = schemaProperties(selected)
-    const required = new Set(schemaRequired(selected))
-    const missing = [...required].filter((name) => !fieldValues()[name]?.trim())
-    if (missing.length) {
-      setError(`Complete required fields: ${missing.join(', ')}.`)
+  const completeRequest = async (request: ToolRequest, approved: boolean, rememberApproval = false) => {
+    setPending(undefined)
+    if (!approved) {
+      await returnToolResult(sessionId, request.requestId, { ok: false, error: 'The user cancelled this action.' })
       return
     }
-    const parsed = Object.fromEntries(Object.entries(fieldValues())
-      .filter(([, value]) => value !== '')
-      .map(([name, value]) => [name, coerceValue(value, properties[name]?.type)]))
+    if (rememberApproval) approvedWriteScopes.add(approvalScope(request))
+    setExecuting(true)
+    try {
+      const tabId = executionTabs.get(request.executionId)
+      if (!tabId) throw new Error('The browser tab for this request is no longer available.')
+      const result = await execute(request.tool.name, request.input, tabId)
+      await returnToolResult(sessionId, request.requestId, { ok: true, result })
+      await refreshPage()
+    } catch (error) {
+      await returnToolResult(sessionId, request.requestId, {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setExecuting(false)
+    }
+  }
 
+  const handleToolRequest = (request: ToolRequest) => {
+    if (request.tool.annotations?.readOnlyHint || approvedWriteScopes.has(approvalScope(request))) {
+      void completeRequest(request, true)
+    }
+    else setPending(request)
+  }
+
+  const send = async () => {
+    const content = draft().trim()
+    if (!content || busy()) return
+    setDraft('')
+    setMessages((current) => [...current, { id: crypto.randomUUID(), role: 'user', content }])
     setBusy(true)
-    setError('')
-    setResult('')
-    const response = await browser.runtime.sendMessage({
-      type: 'webmcp:execute', tabId: id, toolName, input: parsed,
-    }) as WebMcpResponse
-    setBusy(false)
-    if (!response.ok) setError(response.error)
-    else setResult(JSON.stringify(response.value, null, 2) ?? 'Completed')
+    const executionId = crypto.randomUUID()
+    const tabId = page().tabId
+    if (!tabId) {
+      setBusy(false)
+      return
+    }
+    executionTabs.set(executionId, tabId)
+    try {
+      const reply = await sendMessage(sessionId, conversationId, executionId, content, tools(), model())
+      setMessages((current) => [...current, { id: crypto.randomUUID(), role: 'assistant', content: reply }])
+    } catch (error) {
+      setMessages((current) => [...current, {
+        id: crypto.randomUUID(), role: 'assistant',
+        content: error instanceof Error ? error.message : String(error),
+      }])
+    } finally {
+      for (const scope of approvedWriteScopes) {
+        if (scope.startsWith(`${executionId}:`)) approvedWriteScopes.delete(scope)
+      }
+      executionTabs.delete(executionId)
+      setBusy(false)
+    }
   }
 
   onMount(() => {
-    void refreshActivePage()
-    browser.tabs.onActivated.addListener(refreshActivePage)
-    browser.tabs.onUpdated.addListener(refreshActivePage)
-  })
-
-  onCleanup(() => {
-    browser.tabs.onActivated.removeListener(refreshActivePage)
-    browser.tabs.onUpdated.removeListener(refreshActivePage)
+    const disconnectAgent = connectAgent(sessionId, handleToolRequest, setAgentConnected)
+    void browser.storage.local.get('modelSettings').then((stored) => {
+      const value = stored.modelSettings as ModelSettings | undefined
+      if (value?.provider && value.apiKey && value.modelId) setModel(value)
+    })
+    void refreshPage()
+    const onActivated = () => {
+      const request = pending()
+      if (request) void completeRequest(request, false)
+      void refreshPage()
+    }
+    const onUpdated = (tabId: number, change: { status?: string; url?: string }) => {
+      if (tabId === page().tabId && (change.status === 'complete' || Boolean(change.url))) void refreshPage()
+    }
+    browser.tabs.onActivated.addListener(onActivated)
+    browser.tabs.onUpdated.addListener(onUpdated)
+    onCleanup(() => {
+      disconnectAgent()
+      browser.tabs.onActivated.removeListener(onActivated)
+      browser.tabs.onUpdated.removeListener(onUpdated)
+    })
   })
 
   return (
     <main>
       <header>
         <div class="mark">W</div>
-        <div>
-          <h1>WebMCP Assistant</h1>
-          <p>cross-browser side panel poc</p>
-        </div>
+        <div class="identity"><h1>WebMCP Assistant</h1><p>{page().title}</p></div>
+        <span classList={{ 'page-status': true, online: tools().length > 0 }}>{tools().length} tools</span>
       </header>
-      <section class="page" aria-labelledby="active-page-title">
-        <span class="status"><i /> active tab</span>
-        <h2 id="active-page-title">Active page</h2>
-        <strong>{page().title}</strong>
-        <p class="url">{page().url || 'Open a website to see its details.'}</p>
-      </section>
-      <section class="tools" aria-labelledby="tools-title">
-        <div class="section-heading">
-          <div>
-            <h2 id="tools-title">Available tools</h2>
-            <p>{tools().length} exposed by this page</p>
-          </div>
-          <button class="secondary" disabled={busy()} onClick={() => void refreshTools()}>Refresh</button>
-        </div>
 
-        <Show when={tools().length > 0} fallback={<p class="empty">{busy() ? 'Checking this page...' : 'No WebMCP tools found.'}</p>}>
-          <div class="tool-list">
-            <For each={tools()}>{(tool) =>
-              <button classList={{ 'tool-option': true, selected: selectedName() === tool.name }} onClick={() => selectTool(tool.name)}>
-                <span>{tool.title || tool.name}</span>
-                <small>{tool.annotations?.readOnlyHint ? 'read' : 'write'}</small>
-              </button>
-            }</For>
-          </div>
-          <Show when={tools().find((tool) => tool.name === selectedName())}>{(tool) =>
-            <div class="tool-summary">
-              <strong>{tool().title || tool().name}</strong>
-              <p>{tool().description || 'No description provided.'}</p>
-              <span>{tool().annotations?.readOnlyHint ? 'Read only' : 'May change data'}</span>
-            </div>
-          }</Show>
-          <div class="fields">
-            <For each={Object.entries(schemaProperties(tools().find((tool) => tool.name === selectedName())))}>{([name, property]) =>
-              <label>
-                <span>{property.title || humanize(name)}{schemaRequired(tools().find((tool) => tool.name === selectedName())).includes(name) ? ' *' : ''}</span>
-                <Show when={property.enum?.length} fallback={
-                  <input
-                    type={property.type === 'number' || property.type === 'integer' ? 'number' : 'text'}
-                    value={fieldValues()[name] || ''}
-                    placeholder={property.description || ''}
-                    onInput={(event) => setFieldValues((current) => ({ ...current, [name]: event.currentTarget.value }))}
-                  />
-                }>
-                  <select value={fieldValues()[name] || ''} onChange={(event) => setFieldValues((current) => ({ ...current, [name]: event.currentTarget.value }))}>
-                    <option value="">Select...</option>
-                    <For each={property.enum}>{(option) => <option value={String(option)}>{String(option)}</option>}</For>
-                  </select>
-                </Show>
-              </label>
-            }</For>
-          </div>
-          <button class="primary" disabled={busy()} onClick={() => void runSelectedTool()}>{busy() ? 'Running...' : 'Run tool'}</button>
-        </Show>
+      <nav class="tabs" aria-label="Assistant views">
+        <button classList={{ active: view() === 'assistant' }} onClick={() => setView('assistant')}>Assistant</button>
+        <button classList={{ active: view() === 'tools' }} onClick={() => setView('tools')}>Tools</button>
+        <button classList={{ active: view() === 'settings' }} onClick={() => setView('settings')}>Settings</button>
+      </nav>
 
-        <Show when={error()}><p class="feedback error">{error()}</p></Show>
-        <Show when={result()}><pre class="feedback result">{result()}</pre></Show>
-      </section>
-      <footer>The website owns authentication and backend access. No tokens are read by this extension.</footer>
+      <Show when={pageError()}><p class="page-error">{pageError()}</p></Show>
+      <Show when={view() === 'assistant'}>
+        <AssistantView
+          messages={messages()} value={draft()} busy={busy()}
+          disabled={!agentConnected() || tools().length === 0 || !model().apiKey}
+          agentConnected={agentConnected()} modelConfigured={Boolean(model().apiKey)}
+          onConfigure={() => setView('settings')} onInput={setDraft} onSend={() => void send()}
+        />
+      </Show>
+      <Show when={view() === 'tools'}>
+        <InspectorView tools={tools()} busy={busy()} onRefresh={() => void refreshPage()} onExecute={execute} />
+      </Show>
+      <Show when={view() === 'settings'}>
+        <SettingsView settings={model()} onSave={async (settings) => {
+          setModel(settings)
+          await browser.storage.local.set({ modelSettings: settings })
+          setView('assistant')
+        }} />
+      </Show>
+
+      <Show when={pending()}>{(request) =>
+        <Confirmation request={request()} busy={executing()}
+          onCancel={() => void completeRequest(request(), false)}
+          onApprove={() => void completeRequest(request(), true, true)} />
+      }</Show>
     </main>
   )
-}
-
-function schemaProperties(tool?: WebMcpTool): Record<string, WebMcpProperty> {
-  const properties = tool?.inputSchema?.properties
-  return properties && typeof properties === 'object' && !Array.isArray(properties)
-    ? properties as Record<string, WebMcpProperty>
-    : {}
-}
-
-function schemaRequired(tool?: WebMcpTool): string[] {
-  return Array.isArray(tool?.inputSchema?.required)
-    ? tool.inputSchema.required.filter((value): value is string => typeof value === 'string')
-    : []
-}
-
-function coerceValue(value: string, type?: string): unknown {
-  if (type === 'number' || type === 'integer') return Number(value)
-  if (type === 'boolean') return value === 'true'
-  return value
-}
-
-function humanize(value: string): string {
-  return value.replace(/[_-]+/g, ' ').replace(/\b\w/g, (letter) => letter.toUpperCase())
 }

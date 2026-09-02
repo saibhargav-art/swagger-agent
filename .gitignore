@@ -6,8 +6,8 @@ node_modules/
 # Build output
 dist/
 dist-ssr/
-browser-extension-poc/.output/
-browser-extension-poc/.wxt/
+extension/.output/
+extension/.wxt/
 
 # Environment variables
 .env

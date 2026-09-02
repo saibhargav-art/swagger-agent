@@ -35,11 +35,18 @@ async function listTools(tabId: number): Promise<WebMcpResponse<WebMcpTool[]>> {
         const tools = await context.getTools()
         return tools.map((value) => {
           const tool = value as Record<string, unknown>
+          let inputSchema = tool.inputSchema
+          if (typeof inputSchema === 'string') {
+            try { inputSchema = JSON.parse(inputSchema) } catch { inputSchema = undefined }
+          }
+          if (inputSchema && typeof inputSchema === 'object') {
+            inputSchema = JSON.parse(JSON.stringify(inputSchema))
+          }
           return {
             name: String(tool.name || ''),
             title: typeof tool.title === 'string' ? tool.title : undefined,
             description: typeof tool.description === 'string' ? tool.description : undefined,
-            inputSchema: tool.inputSchema,
+            inputSchema,
             annotations: tool.annotations,
           }
         })

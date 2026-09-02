@@ -1,0 +1,19 @@
+{
+  "name": "@webmcp-assistant/agent-service",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx --tsconfig tsconfig.json server.ts",
+    "check": "tsc --noEmit",
+    "build": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@strands-agents/sdk": "^1.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "tsx": "^4.23.0",
+    "typescript": "^5.9.2"
+  }
+}

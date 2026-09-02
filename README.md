@@ -1,152 +1,61 @@
-# AI Chat App
+# WebMCP Browser Assistant
 
-Single React application for AI chat plus customer website tool execution.
+A generic browser assistant with two independent parts:
 
-The app connects to:
+- `extension/`: a WXT and SolidJS side panel that discovers and executes WebMCP tools on the active webpage
+- `agent-service/`: a local Strands HTTP service that selects tools and extracts their inputs
 
-- a local Strands agent service that owns model/tool orchestration
-- a customer website that exposes WebMCP capabilities
-- an authenticated customer API session, passed as a bearer token
-
-The customer backend remains the source of truth for login, roles, scopes, and permissions.
+The extension does not collect customer access tokens. Tool callbacks run in the webpage, so the customer application continues to own its login session, authorization checks, and backend calls.
 
 ## Run
 
-```bash
+Create `agent-service/.env` from `agent-service/.env.example`, add an OpenAI or Anthropic API key, then run:
+
+```powershell
 npm install
-npm run dev
+npm run agent
 ```
 
-Open `http://localhost:5173`.
+In another terminal:
 
-## Production Build
+```powershell
+npm run extension
+```
 
-```bash
+Load `extension/.output/chrome-mv3-dev` as an unpacked Chrome or Edge extension. Open a signed-in WebMCP-enabled webpage and click the extension icon.
+
+## Flow
+
+```text
+Active webpage registers WebMCP tools
+              |
+              v
+Extension discovers tool metadata
+              |
+              v
+User prompt -> Strands agent service
+              |
+              v
+Strands requests a tool invocation
+              |
+              v
+Extension confirms writes and asks the webpage to execute
+              |
+              v
+Webpage uses its own session and backend
+              |
+              v
+Result returns to Strands and the side panel
+```
+
+Read tools run immediately. The first call to a data-changing tool requires confirmation in the side panel. That approval is scoped to the same tool and prompt, allowing Strands to orchestrate bounded multi-record operations without repeatedly prompting. Each prompt remains bound to the browser tab where it started.
+
+## Commands
+
+```powershell
+npm run check
 npm run build
-npm run preview
+npm run extension -- --browser firefox
 ```
 
-## Local Strands Agent
-
-The Node-side Strands runtime in `local-agent/` is the only orchestration service. Start it before the React app:
-
-```bash
-npm run agent:server
-VITE_STRANDS_AGENT_URL=http://127.0.0.1:8787 npm run dev
-```
-
-Select OpenAI or Claude from the Connections page. Customer credentials are sent once to the loopback-only local service; chat requests use an opaque local connection ID.
-
-## Connection Flow
-
-1. Open `Connections`.
-2. Select OpenAI or Claude and enter the provider API key.
-3. Enter the customer app URL that exposes WebMCP capabilities.
-4. Paste the logged-in customer's access token and select **Connect all**.
-5. Verify the discovered tools, then use chat for customer-app actions.
-
-The agent service URL lives under **Advanced settings**. Browser automation is intentionally disabled in this branch so the demo remains fast and tool-focused.
-
-## Customer Contract
-
-The customer app should expose WebMCP capabilities and secure backend endpoints. Capabilities can come from declarative markup, imperative registration, or an optional contract file for compatibility.
-
-Optional `webapi.json` compatibility shape:
-
-```json
-{
-  "openapi": "3.0.0",
-  "info": {
-    "title": "Customer Tools",
-    "version": "1.0.0"
-  },
-  "servers": [
-    {
-      "url": "https://api.customer.com"
-    }
-  ],
-  "security": [{ "bearerAuth": [] }],
-  "paths": {
-    "/action-name": {
-      "post": {
-        "operationId": "performAction",
-        "summary": "Perform an app action",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "required": ["field_name"],
-                "properties": {
-                  "field_name": { "type": "string" }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": { "description": "Action completed" }
-        }
-      }
-    }
-  },
-  "components": {
-    "securitySchemes": {
-      "bearerAuth": {
-        "type": "http",
-        "scheme": "bearer"
-      }
-    }
-  }
-}
-```
-
-`servers[0].url` is the backend that executes tools when a contract file is used. The website URL is used for discovery.
-
-## Folder Structure
-
-```txt
-src/
-  components/
-    chat/
-    connections/
-    layout/
-    tools/
-    ui/
-  hooks/
-  pages/
-    ChatPage/
-    ConnectionsPage/
-  services/
-    chat/
-    connections/
-    runtime/
-  store/
-  types/
-  utils/
-local-agent/
-  connections/
-  runtime/
-  tools/
-```
-
-## Tool Execution UX
-
-The local Strands agent decides which tools to call and what parameters to use. The chat UI does not perform manual tool matching or show raw JSON. Users see plain language responses and structured confirmation cards for write actions:
-
-- read actions execute directly
-- write actions require Confirm/Cancel in the app
-- results are summarized in plain language
-
-## Security Model
-
-The local agent discovers WebMCP capabilities, keeps the customer token in memory, and forwards it only to the declared customer backend. The exposed capability metadata describes what the app can do; it is not an authorization authority.
-
-The customer backend must verify every tool call:
-
-- valid user session
-- allowed role
-- required scope
-- business permission
-- request body validation
+Chrome and Edge use the same side-panel implementation. WXT generates a Firefox sidebar build from the shared source.
