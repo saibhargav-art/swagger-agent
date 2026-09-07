@@ -4,12 +4,14 @@ import AssistantView, { type ChatMessage } from '../../components/AssistantView'
 import Confirmation from '../../components/Confirmation'
 import InspectorView from '../../components/InspectorView'
 import SettingsView from '../../components/SettingsView'
-import { connectAgent, returnToolResult, sendMessage, type ModelSettings, type ToolRequest } from '../../lib/agent-client'
+import { connectAgent, returnToolResult, sendMessage, type ActiveWorkflow, type ModelSettings, type ToolRequest } from '../../lib/agent-client'
 import { discoverTools, executeTool } from '../../lib/webmcp-client'
+import { createToolPresentation, type ToolPresentation } from '../../lib/tool-presentation'
 import type { WebMcpTool } from '../../shared/webmcp'
 
 type ActivePage = { tabId?: number; title: string; url: string }
 type View = 'assistant' | 'tools' | 'settings'
+type PageWorkflow = ActiveWorkflow & { tabId: number }
 
 const sessionId = crypto.randomUUID()
 const conversationId = crypto.randomUUID()
@@ -26,9 +28,12 @@ export default function App() {
   const [agentConnected, setAgentConnected] = createSignal(false)
   const [pageError, setPageError] = createSignal('')
   const [pending, setPending] = createSignal<ToolRequest>()
+  const [activeWorkflow, setActiveWorkflow] = createSignal<PageWorkflow>()
   const [model, setModel] = createSignal<ModelSettings>(defaultModel)
   const approvedWriteScopes = new Set<string>()
   const executionTabs = new Map<string, number>()
+  const executionPresentations = new Map<string, ToolPresentation[]>()
+  const agentTools = () => tools().filter((tool) => tool.annotations?.uiOnlyHint !== true)
 
   const approvalScope = (request: ToolRequest) => `${request.executionId}:${request.tool.name}`
 
@@ -62,6 +67,21 @@ export default function App() {
       const tabId = executionTabs.get(request.executionId)
       if (!tabId) throw new Error('The browser tab for this request is no longer available.')
       const result = await execute(request.tool.name, request.input, tabId)
+      const presentation = createToolPresentation(result, request.tool)
+      if (presentation) {
+        const current = executionPresentations.get(request.executionId) || []
+        executionPresentations.set(request.executionId, [...current, presentation])
+        setActiveWorkflow(presentation.nextAction ? {
+          tabId,
+          status: presentation.kind,
+          nextAction: presentation.nextAction,
+          nextActionInput: presentation.nextActionInput,
+          confirmationRequired: presentation.confirmationRequired,
+          actionLabel: presentation.actionLabel,
+          loadingLabel: presentation.loadingLabel,
+          editAction: presentation.editAction,
+        } : undefined)
+      }
       await returnToolResult(sessionId, request.requestId, { ok: true, result })
       await refreshPage()
     } catch (error) {
@@ -95,18 +115,88 @@ export default function App() {
     }
     executionTabs.set(executionId, tabId)
     try {
-      const reply = await sendMessage(sessionId, conversationId, executionId, content, tools(), model())
-      setMessages((current) => [...current, { id: crypto.randomUUID(), role: 'assistant', content: reply }])
+      const workflow = activeWorkflow()
+      const reply = await sendMessage(
+        sessionId,
+        conversationId,
+        executionId,
+        content,
+        agentTools(),
+        model(),
+        workflow?.tabId === tabId ? workflow : undefined,
+      )
+      const presentations = executionPresentations.get(executionId) || []
+      setMessages((current) => [...current, ...(presentations.length
+        ? presentations.map((presentation) => ({
+          id: crypto.randomUUID(), role: 'assistant' as const, content: '', presentation,
+        }))
+        : [{ id: crypto.randomUUID(), role: 'assistant' as const, content: reply }])])
     } catch (error) {
-      setMessages((current) => [...current, {
-        id: crypto.randomUUID(), role: 'assistant',
-        content: error instanceof Error ? error.message : String(error),
-      }])
+      const presentations = executionPresentations.get(executionId) || []
+      setMessages((current) => [...current, ...(presentations.length
+        ? presentations.map((presentation) => ({
+          id: crypto.randomUUID(), role: 'assistant' as const, content: '', presentation,
+        }))
+        : [{
+          id: crypto.randomUUID(), role: 'assistant' as const,
+          content: error instanceof Error ? error.message : String(error),
+        }])])
     } finally {
       for (const scope of approvedWriteScopes) {
         if (scope.startsWith(`${executionId}:`)) approvedWriteScopes.delete(scope)
       }
       executionTabs.delete(executionId)
+      executionPresentations.delete(executionId)
+      setBusy(false)
+    }
+  }
+
+  const runPresentationAction = async (presentation: ToolPresentation) => {
+    if (!presentation.nextAction || !presentation.nextActionInput) return
+    await runDirectAction(presentation.nextAction, presentation.nextActionInput, presentation.actionLabel || 'Confirm')
+  }
+
+  const runPresentationFormAction = async (presentation: ToolPresentation, values: Record<string, unknown>) => {
+    const action = presentation.formAction
+    if (!action) return
+    await runDirectAction(action.tool, { ...action.input, ...values }, action.label)
+  }
+
+  const runDirectAction = async (toolName: string, input: Record<string, unknown>, label: string) => {
+    const tabId = page().tabId
+    if (!tabId || busy()) return
+    setBusy(true)
+    setMessages((current) => [...current, {
+      id: crypto.randomUUID(),
+      role: 'user',
+      content: label,
+    }])
+    try {
+      const tool = tools().find((candidate) => candidate.name === toolName)
+      if (!tool) throw new Error('The next action is not available on this page.')
+      const result = await execute(tool.name, input, tabId)
+      const nextPresentation = createToolPresentation(result, tool)
+      setActiveWorkflow(nextPresentation?.nextAction ? {
+        tabId,
+        status: nextPresentation.kind,
+        nextAction: nextPresentation.nextAction,
+        nextActionInput: nextPresentation.nextActionInput,
+        confirmationRequired: nextPresentation.confirmationRequired,
+        actionLabel: nextPresentation.actionLabel,
+        loadingLabel: nextPresentation.loadingLabel,
+        editAction: nextPresentation.editAction,
+      } : undefined)
+      setMessages((current) => [...current, nextPresentation
+        ? { id: crypto.randomUUID(), role: 'assistant', content: '', presentation: nextPresentation }
+        : { id: crypto.randomUUID(), role: 'assistant', content: 'Completed.' }])
+      await refreshPage()
+    } catch (error) {
+      setMessages((current) => [...current, {
+        id: crypto.randomUUID(),
+        role: 'assistant',
+        content: error instanceof Error ? error.message : String(error),
+      }])
+    } finally {
       setBusy(false)
     }
   }
@@ -140,7 +230,7 @@ export default function App() {
       <header>
         <div class="mark">W</div>
         <div class="identity"><h1>WebMCP Assistant</h1><p>{page().title}</p></div>
-        <span classList={{ 'page-status': true, online: tools().length > 0 }}>{tools().length} tools</span>
+        <span classList={{ 'page-status': true, online: agentTools().length > 0 }}>{agentTools().length} tools</span>
       </header>
 
       <nav class="tabs" aria-label="Assistant views">
@@ -153,9 +243,11 @@ export default function App() {
       <Show when={view() === 'assistant'}>
         <AssistantView
           messages={messages()} value={draft()} busy={busy()}
-          disabled={!agentConnected() || tools().length === 0 || !model().apiKey}
+          disabled={!agentConnected() || agentTools().length === 0 || !model().apiKey}
           agentConnected={agentConnected()} modelConfigured={Boolean(model().apiKey)}
           onConfigure={() => setView('settings')} onInput={setDraft} onSend={() => void send()}
+          onPresentationAction={(presentation) => void runPresentationAction(presentation)}
+          onPresentationFormAction={(presentation, values) => void runPresentationFormAction(presentation, values)}
         />
       </Show>
       <Show when={view() === 'tools'}>

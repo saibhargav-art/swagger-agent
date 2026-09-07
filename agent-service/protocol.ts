@@ -17,6 +17,15 @@ export type ChatRequest = {
   conversationId: string
   executionId: string
   message: string
+  activeWorkflow?: {
+    status?: string
+    nextAction: string
+    nextActionInput?: Record<string, JSONValue>
+    confirmationRequired?: boolean
+    actionLabel?: string
+    loadingLabel?: string
+    editAction?: string
+  }
   tools: BrowserToolDefinition[]
   model?: {
     provider: 'openai' | 'anthropic'

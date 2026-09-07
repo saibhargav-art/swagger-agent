@@ -35,7 +35,7 @@ export async function runAgent(config: LocalAgentConfig, input: ChatRequest): Pr
   entry.context.executionId = input.executionId
   entry.context.writeCalls = 0
   try {
-    const result = await entry.agent.invoke(input.message, {
+    const result = await entry.agent.invoke(agentMessage(input), {
       limits: { turns: MAX_AGENT_TURNS, totalTokens: MAX_AGENT_TOKENS },
     })
     return {
@@ -95,12 +95,20 @@ function getOrCreateAgent(config: LocalAgentConfig, input: ChatRequest): AgentEn
         'For example, deleting, cancelling, updating, approving, and creating are distinct actions even when they target the same record.',
         'If the exact requested capability is unavailable, say so briefly instead of invoking the closest tool.',
         'Never invent tools, parameters, records, or results.',
+        'When an input schema contains requestText, copy the complete current user message verbatim into it.',
+        'The extension may include trusted active workflow metadata separately from the current user message.',
+        'When active workflow metadata is present, continue with its exact nextAction tool and do not skip to another workflow tool.',
+        'When confirmationRequired is true, include nextActionInput only if the current user message clearly confirms. For an edit or correction, call the same tool without those preset confirmation values.',
+        'Treat a clear yes or confirmation as approval of the active preview only.',
+        'When active workflow metadata has actionLabel, never call nextAction from a chat confirmation. Ask the user to click that action button. If the user provides changes, call editAction with those changes.',
+        'Only populate optional fields that are explicitly present in the current user message or a confirmed draft from the current workflow.',
         'Ask one concise question when a required value cannot be inferred.',
         'Use read tools directly when they satisfy the request.',
         'You may call the same tool more than once when the user clearly requests an operation on multiple records and a read result identifies each target.',
         'For multi-record actions, execute only records that unambiguously match the user request and report each failure without claiming full success.',
         'The browser handles user approval for tools that change data.',
         'After execution, summarize the actual result without exposing raw JSON.',
+        'When a tool result contains missingByTab, missingBySection, capturedByTab, capturedBySection, sections, or preview, do not repeat those details because the extension renders them.',
         'If no tool supports the request, state that briefly.',
       ].join(' '),
     }),
@@ -111,6 +119,19 @@ function getOrCreateAgent(config: LocalAgentConfig, input: ChatRequest): AgentEn
   agents.set(key, entry)
   pruneAgents()
   return entry
+}
+
+function agentMessage(input: ChatRequest): string {
+  if (!input.activeWorkflow) return input.message
+  return [
+    '<active_workflow>',
+    JSON.stringify(input.activeWorkflow),
+    '</active_workflow>',
+    '<current_user_message_json>',
+    JSON.stringify(input.message),
+    '</current_user_message_json>',
+    'The current user message is the decoded JSON string above. Copy only that decoded string into requestText.',
+  ].join('\n')
 }
 
 type ResolvedModel = { provider: 'openai' | 'anthropic'; apiKey: string; modelId: string }

@@ -16,6 +16,16 @@ export type ModelSettings = {
   modelId: string
 }
 
+export type ActiveWorkflow = {
+  status?: string
+  nextAction: string
+  nextActionInput?: Record<string, unknown>
+  confirmationRequired?: boolean
+  actionLabel?: string
+  loadingLabel?: string
+  editAction?: string
+}
+
 export function connectAgent(
   sessionId: string,
   onRequest: (request: ToolRequest) => void,
@@ -37,6 +47,7 @@ export async function sendMessage(
   message: string,
   tools: WebMcpTool[],
   model: ModelSettings,
+  activeWorkflow?: ActiveWorkflow,
 ): Promise<string> {
   const response = await fetch(`${AGENT_URL}/chat`, {
     method: 'POST',
@@ -46,6 +57,7 @@ export async function sendMessage(
       conversationId,
       executionId,
       message,
+      activeWorkflow,
       tools: tools.map((tool) => ({
         ...tool,
         inputSchema: tool.inputSchema || { type: 'object', properties: {} },

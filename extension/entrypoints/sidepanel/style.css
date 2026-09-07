@@ -31,9 +31,39 @@ header { display: flex; align-items: center; gap: 10px; padding: 14px 16px; bord
 .empty-state p { margin-top: 6px; color: #697386; font-size: 12px; line-height: 1.5; }
 .message { max-width: 90%; }
 .message.user { align-self: flex-end; }
+.message.structured { width: 100%; max-width: 100%; }
 .message span { display: block; margin-bottom: 4px; color: #697386; font-size: 10px; font-weight: 600; text-transform: uppercase; }
 .message p { border-radius: 7px; padding: 10px 12px; background: #eef1f5; font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .message.user p { color: #fff; background: #344054; }
+.tool-result-card { overflow: hidden; border: 1px solid #dfe3ea; border-radius: 7px; background: #fff; }
+.tool-result-card.missing { border-color: #fedf89; }
+.tool-result-card.success { border-color: #abefc6; }
+.tool-result-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 12px; border-bottom: 1px solid #eaecf0; }
+.tool-result-heading h3 { font-size: 13px; }
+.tool-result-heading span { flex: 0 0 auto; border-radius: 999px; padding: 3px 7px; color: #475467; background: #f2f4f7; font-size: 10px; font-weight: 600; }
+.tool-result-card.missing .tool-result-heading span { color: #93370d; background: #fffaeb; }
+.tool-result-card.success .tool-result-heading span { color: #067647; background: #ecfdf3; }
+.tool-result-message { padding: 10px 12px 0; color: #475467; font-size: 12px; line-height: 1.45; }
+.tool-result-sections section { padding: 10px 12px; border-bottom: 1px solid #eaecf0; }
+.tool-result-sections section:last-child { border-bottom: 0; }
+.tool-result-sections h4 { margin: 0 0 6px; font-size: 12px; }
+.tool-result-sections p { margin: 3px 0; color: #344054; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
+.tool-result-sections code, .tool-result-sample code { display: block; margin-top: 8px; color: #344054; font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tool-result-sections code { border-left: 2px solid #d0d5dd; padding-left: 8px; }
+.tool-result-section-sample { display: grid; gap: 8px; margin-top: 8px; }
+.tool-result-section-sample code { margin-top: 0; }
+.tool-result-section-sample button { justify-self: start; min-height: 30px; }
+.tool-result-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
+.tool-result-fields label { display: grid; gap: 4px; min-width: 0; color: #344054; font-size: 11px; font-weight: 600; }
+.tool-result-fields input, .tool-result-fields select { width: 100%; min-width: 0; height: 34px; border: 1px solid #cfd6e2; border-radius: 5px; padding: 0 8px; color: #172033; background: #fff; font-size: 12px; }
+.tool-result-fields input:focus, .tool-result-fields select:focus { border-color: #39739d; outline: 2px solid #d9edf8; }
+.tool-result-sample { display: grid; gap: 9px; padding: 10px 12px; background: #f9fafb; }
+.tool-result-sample code { margin: 0; }
+.tool-result-sample button { justify-self: start; }
+.tool-result-action { padding: 10px 12px; border-top: 1px solid #eaecf0; background: #f9fafb; }
+.tool-result-action .primary { display: inline-flex; align-items: center; gap: 8px; }
+.button-spinner { width: 14px; height: 14px; flex: 0 0 auto; border: 2px solid rgb(255 255 255 / 40%); border-top-color: #fff; border-radius: 50%; animation: spin .75s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
 .working { color: #697386; font-size: 12px; }
 .composer { display: grid; grid-template-columns: 1fr auto; gap: 8px; padding: 12px 16px 16px; border-top: 1px solid #dfe3ea; background: #fff; }
 .composer textarea { width: 100%; min-height: 58px; resize: vertical; border: 1px solid #cfd6e2; border-radius: 6px; padding: 9px 10px; color: #172033; background: #fff; }
@@ -68,4 +98,4 @@ input, select { width: 100%; height: 38px; margin-top: 5px; border: 1px solid #c
 .confirmation dt { color: #697386; }
 .confirmation dd { margin: 0; overflow-wrap: anywhere; }
 .actions { display: flex; justify-content: flex-end; gap: 8px; }
-@media (max-width: 340px) { header { padding-inline: 12px; } .composer { grid-template-columns: 1fr; } .composer .primary { width: 100%; } }
+@media (max-width: 340px) { header { padding-inline: 12px; } .composer, .tool-result-fields { grid-template-columns: 1fr; } .composer .primary { width: 100%; } }

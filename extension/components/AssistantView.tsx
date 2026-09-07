@@ -1,6 +1,13 @@
 import { For, Show } from 'solid-js'
+import type { ToolPresentation } from '../lib/tool-presentation'
+import ToolResultCard from './ToolResultCard'
 
-export type ChatMessage = { id: string; role: 'user' | 'assistant'; content: string }
+export type ChatMessage = {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  presentation?: ToolPresentation
+}
 
 type Props = {
   messages: ChatMessage[]
@@ -12,6 +19,8 @@ type Props = {
   onConfigure: () => void
   onInput: (value: string) => void
   onSend: () => void
+  onPresentationAction: (presentation: ToolPresentation) => void
+  onPresentationFormAction: (presentation: ToolPresentation, values: Record<string, unknown>) => void
 }
 
 export default function AssistantView(props: Props) {
@@ -37,9 +46,17 @@ export default function AssistantView(props: Props) {
           </div>
         }>
           <For each={props.messages}>{(message) =>
-            <div classList={{ message: true, user: message.role === 'user' }}>
+            <div classList={{ message: true, user: message.role === 'user', structured: Boolean(message.presentation) }}>
               <span>{message.role === 'user' ? 'You' : 'Assistant'}</span>
-              <p>{message.content}</p>
+              <Show when={message.presentation} fallback={<p>{message.content}</p>}>
+                {(presentation) => <ToolResultCard
+                  presentation={presentation()}
+                  onUseSample={(sample) => props.onInput(appendSample(props.value, sample))}
+                  onAction={props.onPresentationAction}
+                  onFormAction={props.onPresentationFormAction}
+                  busy={props.busy}
+                />}
+              </Show>
             </div>
           }</For>
         </Show>
@@ -58,4 +75,11 @@ export default function AssistantView(props: Props) {
       </form>
     </section>
   )
+}
+
+function appendSample(current: string, sample: string) {
+  const existing = current.trim()
+  if (!existing) return sample
+  if (existing.includes(sample.trim())) return current
+  return `${existing}\n${sample}`
 }
